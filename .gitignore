@@ -1,0 +1,16 @@
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Windows / NTFS (WSL マウント越しに混入する Zone.Identifier 等)
+*:Zone.Identifier
+
+# Local ignores
+*.local
+.env
+
+# Claude Code のプロジェクト固有 local 設定（個人 path や allowlist が入るので追跡しない）
+**/.claude/settings.local.json

@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "CLAUDE_CODE_AUTO_CONNECT_IDE": "false",
+    "CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL": "true",
+    "CLAUDE_CODE_IDE_SKIP_VALID_CHECK": "true",
+    "DISABLE_ERROR_REPORTING": "true",
+    "DISABLE_AUTOUPDATER": "true",
+    "DISABLE_MICROCOMPACT": "true",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(~/.claude/hooks/run-drawio-export.sh:*)",
+      "Bash(~/.claude/skills/edit-issue/fetch-body.sh *)",
+      "Skill(create-issue)",
+      "Skill(edit-issue)",
+      "Skill(create-pr)",
+      "Skill(pdf)",
+      "Skill(create-manual)",
+      "Skill(issue)",
+      "Skill(livewire-v3-syntax)",
+      "Skill(playwright-error-detection)",
+      "Skill(debug-bar-investigation)",
+      "Skill(tailwind-enforcement)",
+      "Skill(commit-workflow)",
+      "Skill(affected-area-testing)",
+      "Skill(route-management)",
+      "Skill(pre-implementation-research)",
+      "Skill(documentation-standards)",
+      "Skill(parallel-setup)"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/skill-enforcer.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/serena-enforcer.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/git-push-merged-pr-check.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/sail-env-inline-block.py"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/sql-schema-check.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/sql-schema-record.py"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/parallel-notification.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/parallel-notification.py"
+          }
+        ]
+      }
+    ]
+  },
+  "theme": "light",
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh",
+    "padding": 1
+  }
+}

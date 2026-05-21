@@ -1,0 +1,294 @@
+/* ======================================================================
+   Japanese manual style template (PDF) — pdf skill assets
+
+   Designed for md-to-pdf with Markdown manuals.
+   Customize via CSS custom properties (--brand, --brand-tint, --footer-brand)
+   set on :root or via inline <style> in the Markdown frontmatter.
+   ====================================================================== */
+
+:root {
+  /* Brand color (used in headings, table headers, badges) — change per project */
+  --brand: #c8102e;
+  --brand-tint: #fde2e8;
+
+  /* Optional company / product name shown bottom-right of every page.
+     Default is empty so the template stays neutral. Override per project
+     by writing on :root (NOT on body — @page rules read custom properties
+     from the document root, not from body):
+        :root { --footer-brand: "Acme Inc."; }
+     in Markdown frontmatter or via additional <style>. */
+  --footer-brand: "";
+
+  /* Callout colors */
+  --note-bg: #eff6ff;
+  --note-border: #3b82f6;
+  --note-text: #1e3a8a;
+  --note-strong: #1e40af;
+
+  /* Generic text colors */
+  --ink: #1f2937;
+  --ink-muted: #6b7280;
+  --ink-faint: #9ca3af;
+
+  /* Table */
+  --table-stripe: #fafafa;
+  --table-hover: #fef2f2;
+  --rule: #e5e7eb;
+}
+
+/* 現場マニュアル向けに上下を詰めて密度優先 (旧: 上 18mm / 右 16mm / 下 22mm / 左 16mm)。
+   余白が必要なドキュメントは Markdown 冒頭の <style> で @page を上書きする。 */
+@page {
+  size: A4;
+  margin: 8mm 10mm 12mm 10mm;
+  @bottom-center {
+    content: counter(page) " / " counter(pages);
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", "IPAPGothic", "IPAGothic", sans-serif;
+    font-size: 9pt;
+    color: #666;
+  }
+  @bottom-right {
+    content: var(--footer-brand);
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", "IPAPGothic", "IPAGothic", sans-serif;
+    font-size: 8pt;
+    color: #999;
+  }
+}
+
+@page:first {
+  margin-top: 12mm;
+  @bottom-center { content: ""; }
+  @bottom-right { content: ""; }
+}
+
+html, body {
+  font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", "Noto Sans CJK JP", "IPAPGothic", "IPAGothic", sans-serif;
+  color: var(--ink);
+  font-size: 10.5pt;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ----- 表紙 (最初の H1) ----- */
+
+h1 {
+  font-size: 22pt;
+  font-weight: 700;
+  color: var(--ink);
+  border-bottom: 4px solid var(--brand);
+  padding-bottom: 0.4em;
+  margin: 0 0 1.2em 0;
+  page-break-before: avoid;
+  page-break-after: avoid;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
+}
+
+/* 表紙直下の引用 (対象/想定時間) */
+h1 + blockquote {
+  background: #f3f4f6;
+  border-left: 4px solid #6b7280;
+  padding: 0.8em 1em;
+  margin: 0 0 1.4em 0;
+  font-size: 10pt;
+  color: #374151;
+}
+
+/* H2 (章) — できるだけ前のセクション末尾と同じページに留めない。
+   強制改ページはしない (各章末尾の空白を最小化するため)。 */
+h2 {
+  font-size: 17pt;
+  font-weight: 700;
+  color: var(--brand);
+  margin: 2.2em 0 0.8em 0;
+  padding-bottom: 0.3em;
+  border-bottom: 2px solid var(--brand-tint);
+  page-break-after: avoid;
+  page-break-inside: avoid;
+}
+
+h3 {
+  font-size: 13pt;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 1.6em 0 0.6em 0;
+  padding-left: 0.6em;
+  border-left: 4px solid var(--brand);
+  page-break-after: avoid;
+}
+
+h4 {
+  font-size: 11.5pt;
+  font-weight: 700;
+  color: #374151;
+  margin: 1.2em 0 0.4em 0;
+}
+
+p {
+  margin: 0.55em 0;
+}
+
+/* ----- ポイント / 注意 などの引用ブロック -----
+   "ご注意" 系で赤系強調したい場合は <blockquote class="warning"> を使う運用
+   (CSS :contains() は標準ではないため、自動振り分けは未実装) */
+
+blockquote {
+  background: var(--note-bg);
+  border-left: 4px solid var(--note-border);
+  padding: 0.7em 1em;
+  margin: 1em 0;
+  color: var(--note-text);
+  border-radius: 0 4px 4px 0;
+  page-break-inside: avoid;
+}
+
+blockquote p {
+  margin: 0.3em 0;
+}
+
+blockquote p:first-child strong:first-child {
+  color: var(--note-strong);
+  background: none;
+  padding: 0;
+}
+
+/* ----- リスト ----- */
+
+ul, ol {
+  padding-left: 1.6em;
+  margin: 0.5em 0;
+}
+
+li {
+  margin: 0.3em 0;
+}
+
+/* タスクリスト ( - [ ] / - [x] ) は <input type="checkbox"> として描画される。
+   md-to-pdf 確認済み (2026-05)。 */
+ul li input[type="checkbox"] {
+  margin-right: 0.4em;
+  transform: scale(1.2);
+}
+
+/* ----- テーブル ----- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0 1.4em 0;
+  font-size: 10pt;
+  page-break-inside: avoid;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+thead {
+  background: var(--brand);
+  color: #fff;
+}
+
+th {
+  padding: 0.55em 0.8em;
+  text-align: left;
+  font-weight: 700;
+  border: 1px solid var(--brand);
+}
+
+td {
+  padding: 0.5em 0.8em;
+  border: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+tbody tr:nth-child(even) {
+  background: var(--table-stripe);
+}
+
+tbody tr:hover {
+  background: var(--table-hover);
+}
+
+/* 番号列は中央寄せ */
+td:first-child {
+  text-align: center;
+  font-weight: 700;
+  color: var(--brand);
+  width: 3em;
+  white-space: nowrap;
+}
+
+/* ----- 画像 ----- */
+
+/* スクショ画像。max-height を入れないと縦長画像 (印刷物 1200x1600 や スマホ 428x926) が
+   A4 印字幅に拡大されて 1 ページを超え、page-break-inside: avoid と相まって前ページに
+   大きな空白を作る。 */
+img {
+  max-width: 100%;
+  max-height: 620px;
+  width: auto;
+  height: auto;
+  display: block;
+  margin: 1.2em auto;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  page-break-inside: avoid;
+  page-break-before: avoid;
+}
+
+/* スマホスクショ用クラス。縦長 (例 428x926) は本文と同居させるため横幅も絞る。
+   使用例: <img src="..." alt="..." class="mobile-shot"/> */
+img.mobile-shot {
+  max-width: 360px;
+}
+
+/* ----- 区切り線 ----- */
+
+hr {
+  border: none;
+  border-top: 2px dashed #d1d5db;
+  margin: 2.4em 0;
+}
+
+/* ----- インラインコード ----- */
+
+code {
+  background: #f3f4f6;
+  padding: 0.1em 0.4em;
+  border-radius: 3px;
+  font-family: "SF Mono", "Consolas", "Menlo", monospace;
+  font-size: 0.9em;
+  color: #be123c;
+}
+
+/* ----- 強調 ----- */
+
+strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+em {
+  font-style: normal;
+  color: var(--ink-muted);
+  font-size: 0.92em;
+}
+
+/* 最終更新表記 (ファイル末尾の em) */
+hr + p em {
+  display: block;
+  text-align: right;
+  color: var(--ink-faint);
+  font-size: 9pt;
+  margin-top: 1em;
+}
+
+/* ----- リンク (PDF では下線控えめに) ----- */
+a {
+  color: var(--brand);
+  text-decoration: none;
+}
+
+/* ----- 見出し直下の段落 ----- */
+h2 + p, h3 + p {
+  margin-top: 0.4em;
+}

@@ -1,0 +1,4 @@
+# シェルスクリプトは LF を強制
+# core.autocrlf=true 環境で checkout 時に CRLF に変換されると
+# shebang `#!/bin/bash\r` が解釈できず exit 127 になるため。
+*.sh text eol=lf
