@@ -14,6 +14,38 @@
 | `hooks/` | `~/.claude/hooks/` | PreToolUse / PostToolUse / Notification / Stop の hook スクリプト |
 | `skills/global/` | `~/.claude/skills/` | プロジェクト非依存の global skill |
 
+## 前提ツール
+
+### Required（最低限必要）
+
+- **`git`** — clone / pull に使用
+- **`python3`**（3.9 以降） — 全 hook スクリプトの実行ランタイム
+- **`gh`** CLI — `create-issue` / `edit-issue` / `create-pr` / `issue` skill が `gh` を呼ぶ
+- **`jq`** — `statusline.sh` が Claude Code からの JSON 入力をパースするのに使用
+
+### Optional（特定の skill / hook 使用時のみ）
+
+| ツール | 必要な skill / hook |
+|---|---|
+| `npx` (Node.js) | `pdf` skill が `md-to-pdf` を呼ぶ |
+| `drawio` CLI + `Xvfb` | `run-drawio-export.sh` hook（drawio → SVG 変換） |
+| `powershell.exe` + Windows Terminal | `parallel-notification.py` hook（WSL2 限定の WPF 通知） |
+| Google Chrome / Chromium | `pdf` skill の PDF レンダリング（md-to-pdf 経由） |
+| `fonts-ipafont-gothic` | `pdf` skill で日本語マニュアル生成時の文字化け回避 |
+
+### MCP サーバー（任意）
+
+下記 MCP を利用する場合は別途 `~/.claude.json` 等で設定する。本リポは MCP 設定は同梱しない。
+
+| MCP | 関連する skill / hook |
+|---|---|
+| `serena` | `serena-enforcer.py` hook（コード discovery 誘導）、各 skill のコード探索 |
+| `playwright` | `playwright-error-detection` skill、`create-manual` skill のスクショ撮影 |
+| `context7` | `livewire-v3-syntax` skill が最新仕様確認に使用 |
+| `laravel-boost` | `pre-implementation-research` / `create-manual` skill（Laravel + Sail 環境のみ） |
+
+> **設置前にバックアップ推奨**: 既に `~/.claude/CLAUDE.md` / `~/.claude/settings.json` 等を持っている場合、本リポからの symlink で上書きされる。事前に退避すること。
+
 ## セットアップ
 
 ```bash
@@ -103,4 +135,4 @@ done
 
 ## ライセンス
 
-利用や fork は自由にどうぞ。設定例のテンプレートとして使えるよう、固有情報は含めていません。
+[MIT License](./LICENSE)。利用や fork は自由にどうぞ。設定例のテンプレートとして使えるよう、固有情報は含めていません。
