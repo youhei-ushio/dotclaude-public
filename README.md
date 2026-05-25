@@ -32,6 +32,7 @@
 | `powershell.exe` + Windows Terminal | `parallel-notification.py` hook（WSL2 限定の WPF 通知） |
 | Google Chrome / Chromium | `pdf` skill の PDF レンダリング（md-to-pdf 経由） |
 | `fonts-ipafont-gothic` | `pdf` skill で日本語マニュアル生成時の文字化け回避 |
+| `pip` (Python パッケージマネージャ) | `pdf-read` skill が初回実行時に `pypdfium2` / `Pillow` / `pdfplumber` を自動 install |
 
 ### MCP サーバー（任意）
 
@@ -98,6 +99,7 @@ done
 | `edit-issue` | 既存 Issue 本文の編集（`--body-file` で許可確認を回避） |
 | `create-pr` | 現在のブランチから PR 作成 |
 | `pdf` | Markdown → PDF 生成（SVG を base64 インライン化、相対パス画像、日本語マニュアル向け CSS テンプレ対応） |
+| `pdf-read` | PDF を全ページ PNG にレンダリング + テキスト抽出。PowerPoint 由来 PDF の図表内文字（SmartArt / 表セル内）を視覚確認するため（pypdfium2 / Apache 2.0 + Pillow + pdfplumber） |
 | `commit-workflow` | コミット指示の判定と `[カテゴリ] 概要` 形式のメッセージ規約、デバッグログ削除確認 |
 | `affected-area-testing` | 改修後テストの 4 段階（基本機能 / 新機能 / 統合 / 回帰）と Playwright での実機確認 |
 | `playwright-error-detection` | Playwright MCP でのブラウザ検証直後に画面エラーを必ず検出する関数 |
