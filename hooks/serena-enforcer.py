@@ -37,7 +37,10 @@ CODE_EXT_PATTERN = (
 BLADE_EXT_PATTERN = r"\.blade\.php\b"
 
 
-# Each rule: (compiled regex, reason)
+# Each rule: (compiled regex, reason, tool_label)
+# tool_label は BYPASS_WARNINGS と結合して bypass 多用警告に使う。
+# cat と head/tail/wc/less/more は同根 (read-only コード閲覧) だが、cat だけ
+# bypass で Read tool 強推奨警告を出すため別ラベルに分けている。
 RULES = [
     (
         re.compile(
@@ -46,6 +49,7 @@ RULES = [
         ),
         "コードを対象にした grep は禁止。Serena の "
         "mcp__serena__search_for_pattern / mcp__serena__find_symbol を使う。",
+        "grep",
     ),
     (
         re.compile(
@@ -54,14 +58,25 @@ RULES = [
         ),
         "コードを対象にした find は禁止。Serena の "
         "mcp__serena__find_file / mcp__serena__find_symbol を使う。",
+        "find",
     ),
     (
         re.compile(
-            r"\b(?:cat|head|tail|wc|less|more)\b[^|;&]*?(?:"
+            r"\bcat\b[^|;&]*?(?:"
             + CODE_EXT_PATTERN + r"|" + BLADE_EXT_PATTERN + r")"
         ),
-        "コードファイルの cat/head/tail/less は禁止。Serena の "
+        "コードファイルの cat は禁止。Read tool または Serena の "
         "mcp__serena__get_symbols_overview / mcp__serena__find_symbol(include_body=true) を使う。",
+        "cat",
+    ),
+    (
+        re.compile(
+            r"\b(?:head|tail|wc|less|more)\b[^|;&]*?(?:"
+            + CODE_EXT_PATTERN + r"|" + BLADE_EXT_PATTERN + r")"
+        ),
+        "コードファイルの head/tail/wc/less/more は禁止。Serena の "
+        "mcp__serena__get_symbols_overview / mcp__serena__find_symbol(include_body=true) を使う。",
+        "read-family",
     ),
     (
         re.compile(
@@ -69,8 +84,30 @@ RULES = [
         ),
         "コード配下の再帰 ls は禁止。Serena の "
         "mcp__serena__list_dir / mcp__serena__find_file を使う。",
+        "ls-R",
     ),
 ]
+
+
+# tool_label 別の bypass 多用警告。
+# bypass マッチ時 (= block しない経路) に該当ラベルの警告を stderr に出すことで、
+# 真に必要な bypass (例: find -path / ls / git ls-tree) は妨げず、serena で
+# 代替可能な tool (grep / cat) の習慣的多用を抑制する。
+# 警告は出すが block はしない (= bypass の意図は尊重)。
+BYPASS_WARNINGS = {
+    "grep": (
+        "[serena-enforcer] WARN: grep の bash-discovery bypass は serena 代替推奨。"
+        "mcp__serena__search_for_pattern (パターン検索) / "
+        "mcp__serena__find_symbol (シンボル定義) を検討してください。"
+    ),
+    "cat": (
+        "[serena-enforcer] WARN: cat の bash-discovery bypass は Read tool 代替推奨。"
+        "既知パスは Read tool の方が安全 (line range / offset 制御 / 大ファイル truncation)。"
+    ),
+    # find / read-family (head/tail/wc/less/more) / ls-R は WARN なし (現状維持)。
+    # find はパスベース検索で serena 代替が薄く、ls-R / read-family は頻度低く
+    # 観察上も多用傾向が見られなかったため。
+}
 
 
 def main() -> int:
@@ -90,28 +127,43 @@ def main() -> int:
     if not isinstance(command, str):
         return 0
 
+    # まず RULES に対してマッチ判定 (どの tool 系のコード探索コマンドか特定)。
+    # マッチしなければ何もせず exit 0 (= block 対象外コマンドはそのまま通す)。
+    matched_reason = None
+    matched_tool_label = None
+    for pattern, reason, tool_label in RULES:
+        if pattern.search(command):
+            matched_reason = reason
+            matched_tool_label = tool_label
+            break
+
+    if matched_reason is None:
+        return 0
+
     # Bypass requires a non-empty reason after the colon:
     #   `# via:bash-discovery: <reason>`
     # A bare `# via:bash-discovery` (no colon or empty/whitespace-only reason)
     # is not enough — this makes the bypass a deliberate, documented choice.
     if re.search(r"#\s*via:bash-discovery\s*:\s*\S+", command):
+        # bypass あり → block しないが、tool_label 別の警告があれば出す
+        # (grep / cat の習慣的多用を stderr 痕跡で抑制)。
+        warning = BYPASS_WARNINGS.get(matched_tool_label)
+        if warning:
+            print(warning, file=sys.stderr)
         return 0
 
-    for pattern, reason in RULES:
-        if pattern.search(command):
-            print(
-                "BLOCKED by serena-enforcer hook.\n"
-                f"reason: {reason}\n"
-                "Use Serena's symbolic tools (mcp__serena__*) instead.\n"
-                "Bypass (only with conscious justification): append "
-                "`# via:bash-discovery: <reason>` to the command.\n"
-                "The reason after the colon must be non-empty so each bypass "
-                "is a documented choice, not a habit.",
-                file=sys.stderr,
-            )
-            return 2
-
-    return 0
+    # bypass なし → 既存の block 挙動
+    print(
+        "BLOCKED by serena-enforcer hook.\n"
+        f"reason: {matched_reason}\n"
+        "Use Serena's symbolic tools (mcp__serena__*) instead.\n"
+        "Bypass (only with conscious justification): append "
+        "`# via:bash-discovery: <reason>` to the command.\n"
+        "The reason after the colon must be non-empty so each bypass "
+        "is a documented choice, not a habit.",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":
