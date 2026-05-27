@@ -74,6 +74,15 @@
             "command": "python3 ~/.claude/hooks/sql-schema-record.py"
           }
         ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+          }
+        ]
       }
     ],
     "Notification": [
@@ -94,6 +103,43 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/parallel-notification.py"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/permission-request-logger.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
           }
         ]
       }
