@@ -10,8 +10,8 @@
 |---|---|---|
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` | global ルール（言語・コード discovery 方針 等） |
 | `settings.json` | `~/.claude/settings.json` | env / permissions / hooks のサンプル設定 |
-| `statusline.sh` | `~/.claude/statusline.sh` | 2 行構成のカスタム statusline |
-| `hooks/` | `~/.claude/hooks/` | PreToolUse / PostToolUse / Notification / Stop の hook スクリプト |
+| `statusline.sh` | `~/.claude/statusline.sh` | 最大 4 行構成のカスタム statusline（pending review / awaiting 行を含む） |
+| `hooks/` | `~/.claude/hooks/` | PreToolUse / PostToolUse / PermissionRequest / UserPromptSubmit / SessionStart / Notification / Stop の hook スクリプト |
 | `skills/global/` | `~/.claude/skills/` | プロジェクト非依存の global skill |
 
 ## 前提ツール
@@ -85,6 +85,8 @@ done
 | `sql-schema-check.py` | PreToolUse / Write | `.sql` ファイル書き込み時に参照テーブルが事前確認済みかバリデート | 汎用（SQL を書く Claude セッション向け） |
 | `sql-schema-record.py` | PostToolUse / Bash | スキーマ照会クエリを検出してセッション内 state に記録（上の check と対） | 同上 |
 | `parallel-notification.py` | Notification / Stop | 並走 clone（`*-parallel-N`）環境向け WPF ポップアップ通知 + Windows Terminal タブ focus | **WSL2 + Windows Terminal + powershell.exe 前提** |
+| `permission-request-logger.py` | PermissionRequest | 許可ダイアログの内容を `~/.claude/logs/permission-requests.jsonl` に JSONL 記録（`/review-permissions` skill でまとめてレビューする用）。秘密値を含みうるため 0o600 で書き込み | 汎用（`/review-permissions` skill と対） |
+| `awaiting-parallel.py` | PermissionRequest / UserPromptSubmit / PostToolUse / SessionStart | 並走 clone（`<project>-parallel-N`）で「どの parallel が応答待ちか」を `~/.claude/state/awaiting.tsv` に記録し statusline 4 行目に表示 | 並走 clone 運用向け（単一セッションでは parallel 0 で空振り） |
 | `run-drawio-export.sh` | （手動 / skill から） | drawio → SVG 変換ラッパー（Xvfb + drawio） | drawio CLI が必要 |
 
 `parallel-notification.py` は WSL2 上の特殊用途なので、他環境で使う場合は無効化するか各自書き換える想定。
@@ -108,6 +110,7 @@ done
 | `create-manual` | feature PR とセットで現場向け操作マニュアルを作成。物理名 → 業務語の置換ルール / レビュー観点チェックリスト / スクショ撮影手順 / マニュアル雛形を内包 |
 | `issue` | Issue 番号指定で「main 取得 → 設計書ゲート → 実装 → テスト → PR → レビュー → マニュアル → ブラウザテスト」を一括実行（Laravel + Livewire を例として説明） |
 | `parallel-setup` | 並走 clone（worktree でない独立 clone を 4〜7 本）を立てる pattern と手順。役割（feature/hotfix/PoC/refactor 等）別の分担、COMPOSE_PROJECT_NAME / ポート / .mcp.json の isolation、`parallel-notification.py` hook の wiring、共有 DB の扱い、運用 Tips |
+| `review-permissions` | 蓄積された許可要求ログ（`permission-request-logger.py` が記録）をクラスタ単位で対話レビューし、allowlist 追加 / skill 化 / hook 化 / スクリプト化 / 都度確認継続 を判断 |
 
 ### 特定スタック前提
 
@@ -122,10 +125,12 @@ done
 
 ## statusline
 
-`statusline.sh` は 2 行構成:
+`statusline.sh` は最大 4 行構成（3・4 行目は該当が無ければ非表示）:
 
 - **1 行目**: セッション名 / Git ブランチ / カレントディレクトリ
 - **2 行目**: モデル名 / コンテキスト使用率バー（70% で黄・90% で赤）/ セッションコスト / レートリミット
+- **3 行目**: 未レビュー許可要求の件数（`permission-request-logger.py` が記録したログの行数。`/review-permissions` で棚卸し）
+- **4 行目**: 応答待ち parallel 一覧（`awaiting-parallel.py` が記録した `awaiting.tsv` を集約。`P1, P3` 形式）
 
 依存: `jq`、`git`。
 
