@@ -28,7 +28,8 @@
       "Skill(route-management)",
       "Skill(pre-implementation-research)",
       "Skill(documentation-standards)",
-      "Skill(parallel-setup)"
+      "Skill(parallel-setup)",
+      "Skill(handoff)"
     ],
     "defaultMode": "acceptEdits"
   },
