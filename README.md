@@ -111,6 +111,7 @@ done
 | `issue` | Issue 番号指定で「main 取得 → 設計書ゲート → 実装 → テスト → PR → レビュー → マニュアル → ブラウザテスト」を一括実行（Laravel + Livewire を例として説明） |
 | `parallel-setup` | 並走 clone（worktree でない独立 clone を 4〜7 本）を立てる pattern と手順。役割（feature/hotfix/PoC/refactor 等）別の分担、COMPOSE_PROJECT_NAME / ポート / .mcp.json の isolation、`parallel-notification.py` hook の wiring、共有 DB の扱い、運用 Tips |
 | `review-permissions` | 蓄積された許可要求ログ（`permission-request-logger.py` が記録）をクラスタ単位で対話レビューし、allowlist 追加 / skill 化 / hook 化 / スクリプト化 / 都度確認継続 を判断 |
+| `handoff` | 作業状態を `~/.claude/handoff/` の Markdown に保存し、後で読み込んで続きから再開（`save` / `load` / `list`）。セッション跨ぎの引き継ぎやタスク切り替えに使う |
 
 ### 特定スタック前提
 
