@@ -328,7 +328,7 @@ while iteration <= ITER_MAX:
         → 意味的コンフリクト検出時 (fix のみ): ESCALATE_REASON = "base-conflict"
           → Step 4.5 (escalate 内容のみで対応履歴に追記、本巡 commit 無し)
           → break (Step 7 → Step 8 の順は必ず実施)
-    Step 2 (3 エージェント並列レビュー、MODE 共通)
+    Step 2 (3 エージェント並列レビュー: Reviewer A / B + Fact-checker、MODE 共通)
         → iteration >= 3 なら REVIEWER_PROMPT 末尾に後半巡制約を付与
           (review-only は ITER_MAX=1 のためこの分岐は走らない)
     Step 3 (指摘分類)
@@ -572,14 +572,14 @@ fact-checker subagent に渡す。
 
 #### 2.4 Fact-checker を 1 つ起動 (親 pre-classification 後の残りについて)
 
-**MODE 共通**: review-only モードでも本 Step は実施する。`factcheck` フィー
-ルドの値 (Fact-checker subagent が付与する `verified` / `false-claim` / `n/a`
-と、Step 2.3 で親が付与する `parent-rejected` の 4 値) は、Step 3 の
-review-only 分類で silent-reject 判定 (`factcheck="false-claim"` または
-`"parent-rejected"`) と `[Question]` 振替判定 (`factcheck != "verified"` の
-単独票 [Must-fix]) の両方で参照されるため、Fact-checker subagent 起動は省略
-できない (短縮禁止セクションの「Fact-checker subagent を『面倒だから』省略
-する」禁止条項と同じ趣旨)。
+**MODE 共通**: review-only モードでも本 Step は実施する。`factcheck` フィールド
+の値 (Fact-checker subagent が付与する `verified` / `false-claim` / `n/a` と、
+Step 2.3 で親が付与する `parent-rejected` の 4 値) は、Step 3 の review-only
+分類で silent-reject 判定 (`factcheck="false-claim"` または `"parent-rejected"`)
+と `[Question]` 振替判定 (`agreement == 1` かつ `factcheck != "verified"` の
+単独票 [Must-fix]、詳細条件は Step 3 (i) 参照) の両方で参照されるため、
+Fact-checker subagent 起動は省略できない (短縮禁止セクションの「Fact-checker
+subagent を『面倒だから』省略する」禁止条項と同じ趣旨)。
 
 `FINDINGS_RAW` から「親が処理済み」のものを除いた指摘を渡して verify させる:
 
