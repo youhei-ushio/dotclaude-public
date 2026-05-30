@@ -328,9 +328,9 @@ while iteration <= ITER_MAX:
         → 意味的コンフリクト検出時 (fix のみ): ESCALATE_REASON = "base-conflict"
           → Step 4.5 (escalate 内容のみで対応履歴に追記、本巡 commit 無し)
           → break (Step 7 → Step 8 の順は必ず実施)
-    Step 2 (3 エージェント並列レビュー) — MODE 共通
-        → iteration >= 3 なら REVIEWER_PROMPT 末尾に後半巡制約を付与
-          (review-only は ITER_MAX=1 のためこの分岐は走らない)
+    Step 2 (3 エージェント並列レビュー: Reviewer A / B + Fact-checker、MODE 共通)
+        → (fix モードのみ) iteration >= 3 なら REVIEWER_PROMPT 末尾に後半巡
+          制約を付与 (review-only は ITER_MAX=1 のためこの分岐は走らない)
     Step 3 (指摘分類)
         → fix モード: silent-reject / escalate / auto-fix の 3 分類
         → review-only モード: silent-reject / report の 2 分類
@@ -443,6 +443,12 @@ else:
 ```
 
 ### Step 2: レビュー実行 (Reviewer A / B + Fact-checker の 3 段並列構成)
+
+**MODE 共通**: 本 Step (2.1 〜 2.5 全体) は fix モード / review-only モード
+両方で実施する。review-only モードでも Reviewer A / B 並列起動 (2.1)、結果
+マージ (2.2)、parent pre-classification (2.3)、Fact-checker subagent 起動
+(2.4)、fact-check 結果マージ (2.5) のいずれも省略しない (Step 3 の review-only
+分類は factcheck フィールドを参照するため必須)。
 
 #### 2.1 Reviewer A と Reviewer B を並列起動
 
@@ -565,6 +571,16 @@ Fact-checker (subagent) に投げる前に、**親しか確実に検証できな
 fact-checker subagent に渡す。
 
 #### 2.4 Fact-checker を 1 つ起動 (親 pre-classification 後の残りについて)
+
+**MODE 共通**: review-only モードでも本 Step は実施する。`factcheck` フィールド
+の値 (Fact-checker subagent が付与する `verified` / `false-claim` / `n/a` と、
+Step 2.3 で親が付与する `parent-rejected` の 4 値) は、Step 3 の review-only
+分類で silent-reject 判定 (`factcheck == "false-claim"` または `factcheck ==
+"parent-rejected"`) と `[Question]` 振替判定 (`agreement == 1` かつ
+`factcheck != "verified"` かつ `iteration < 3` の単独票 [Must-fix]、詳細条件は
+Step 3 (i) 参照) の両方で参照されるため、Fact-checker subagent 起動は省略
+できない (短縮禁止セクションの「Fact-checker subagent を『面倒だから』省略
+する」禁止条項と同じ趣旨)。
 
 `FINDINGS_RAW` から「親が処理済み」のものを除いた指摘を渡して verify させる:
 
