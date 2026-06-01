@@ -112,7 +112,7 @@ done
 | `parallel-setup` | 並走 clone（worktree でない独立 clone を 4〜7 本）を立てる pattern と手順。役割（feature/hotfix/PoC/refactor 等）別の分担、COMPOSE_PROJECT_NAME / ポート / .mcp.json の isolation、`parallel-notification.py` hook の wiring、共有 DB の扱い、運用 Tips |
 | `review-permissions` | 蓄積された許可要求ログ（`permission-request-logger.py` が記録）をクラスタ単位で対話レビューし、allowlist 追加 / skill 化 / hook 化 / スクリプト化 / 都度確認継続 を判断 |
 | `review-pr` | 指定 PR をセルフレビュー。Reviewer A/B + Fact-checker の 3 エージェント並列構成（worktree 分離）。自分が author の PR は最大 5 巡で auto-fix モード、collaborator の PR は自動的に review-only モードで GitHub に summary review コメントを投稿（`--review-only` / `--fix` で明示 override 可）|
-| `handoff` | 作業状態を `~/.claude/handoff/` の Markdown に保存し、後で読み込んで続きから再開（`save` / `load` / `list`）。セッション跨ぎの引き継ぎやタスク切り替えに使う |
+| `handoff` | 作業状態を `~/.claude/handoff/` の Markdown に保存し、後で読み込んで続きから再開（`save` / `load` / `list`）。セッション跨ぎの引き継ぎやタスク切り替えに使う。保存先は初回 `save` 時に自動作成され、`title` skill 不在環境でも単体で動作する |
 
 ### 特定スタック前提
 
