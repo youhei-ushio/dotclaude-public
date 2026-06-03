@@ -87,7 +87,7 @@ done
 | `parallel-notification.py` | Notification / Stop | 並走 clone（`*-parallel-N`）環境向け WPF ポップアップ通知 + Windows Terminal タブ focus | **WSL2 + Windows Terminal + powershell.exe 前提** |
 | `permission-request-logger.py` | PermissionRequest | 許可ダイアログの内容を `~/.claude/logs/permission-requests.jsonl` に JSONL 記録（`/review-permissions` skill でまとめてレビューする用）。秘密値を含みうるため 0o600 で書き込み | 汎用（`/review-permissions` skill と対） |
 | `awaiting-parallel.py` | PermissionRequest / UserPromptSubmit / PostToolUse / SessionStart | 並走 clone（`<project>-parallel-N`）で「どの parallel が応答待ちか」を `~/.claude/state/awaiting.tsv` に記録し statusline 4 行目に表示 | 並走 clone 運用向け（単一セッションでは parallel 0 で空振り） |
-| `terminal-title.py` | PostToolUse / Stop | session 名（`/rename` や plan 承認の自動命名で設定）から iTerm2 のタブ/ウィンドウタイトルと badge を更新。Stop 時は完了アイコン + 通知も発火 | **iTerm2 専用**（OSC 1337 badge は iTerm2 のみ。非対応端末ではタブ/ウィンドウタイトルのみ機能し badge は無視される） |
+| `terminal-title.py` | PostToolUse / Stop | session 名（`/rename` や plan 承認の自動命名で設定）から iTerm2 のタブ/ウィンドウタイトルと badge を更新。Stop 時は完了アイコン + 通知も発火 | タブ/ウィンドウタイトル（OSC 1/2）は汎用。badge（OSC 1337）は iTerm2 専用で非対応端末では無視される |
 | `run-drawio-export.sh` | （手動 / skill から） | drawio → SVG 変換ラッパー（Xvfb + drawio） | drawio CLI が必要 |
 
 `parallel-notification.py` は WSL2 上の特殊用途なので、他環境で使う場合は無効化するか各自書き換える想定。
