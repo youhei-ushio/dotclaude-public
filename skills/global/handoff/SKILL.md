@@ -13,7 +13,7 @@ allowed-tools: Bash, Read, Write, Glob
 
 - **保存先ディレクトリ**: `~/.claude/handoff/`（存在しなければ初回 save 時に自動作成する）
 - **ファイル名フォーマット**: `YYYY-MM-DD-HHMMSS-{サニタイズ後タスク名}.md`
-- **テンプレート**: `~/.claude/skills/global/handoff/template.md`
+- **テンプレート**: `~/.claude/skills/handoff/template.md`
 - **タスク名のサニタイズ規則**（ファイル名に使う際に必ず適用する。frontmatter の `task` には元のタスク名を保存する）:
   1. 不正文字（`/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`, 改行）はハイフンに置換する
   2. 空白文字（半角スペース・全角スペース・タブ）はハイフンに置換する
@@ -46,7 +46,7 @@ allowed-tools: Bash, Read, Write, Glob
    - **既存ファイルが無い場合**: `created` と `updated` を両方とも現在時刻に設定する。
 4. 現在時刻を取得: `date +%Y-%m-%d-%H%M%S`
 5. 新ファイルパスを決定: `~/.claude/handoff/{YYYY-MM-DD-HHMMSS}-{サニタイズ後タスク名}.md`
-6. テンプレート `~/.claude/skills/global/handoff/template.md` を Read し、プレースホルダに**現時点の会話文脈から分かる内容**を埋めて新ファイルに Write する
+6. テンプレート `~/.claude/skills/handoff/template.md` を Read し、プレースホルダに**現時点の会話文脈から分かる内容**を埋めて新ファイルに Write する
    - `{...}` で囲まれたプレースホルダ・ガイダンス文（例: `{今どこまで進んだか…}`）は最終出力には残さず、実内容で置き換える。埋める内容が無い項目は `-` のみの空リストにする（後から手で追記できるように）
    - frontmatter は `template.md` 冒頭の `---` 行から始める。テンプレートにフェンス（` ``` `）は含まれていないので、そのまま書き出してよい
    - 事実に基づき、推測が入る場合は `（推測）` と明示する
