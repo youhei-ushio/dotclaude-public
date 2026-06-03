@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """Claude Code hook: set iTerm2 tab/window title, badge, and notifications
 from the current Claude Code session name (~/.claude/sessions/{pid}.json)."""
-import sys
+import base64
 import json
 import os
 import subprocess
-import base64
+import sys
+
+
+def _osc_safe(s: str) -> str:
+    """Strip ESC and BEL to prevent OSC sequence injection."""
+    return s.replace('\x1b', '').replace('\x07', '')
+
 
 try:
     data = json.load(sys.stdin)
@@ -23,12 +29,14 @@ pid = str(os.getpid())
 for _ in range(10):
     r = subprocess.run(['ps', '-o', 'ppid=', '-p', pid], capture_output=True, text=True)
     pid = r.stdout.strip()
-    if not pid or not pid.isdigit() or pid == '1':
+    if not pid or not pid.isdigit() or pid in ('0', '1'):
         break
     r2 = subprocess.run(['ps', '-o', 'tty=', '-p', pid], capture_output=True, text=True)
-    tty = r2.stdout.strip().splitlines()[0] if r2.stdout.strip() else ''
+    tty = ''
+    if r2.returncode == 0 and r2.stdout.strip():
+        tty = r2.stdout.strip().splitlines()[0]
     if tty and tty != '??' and os.access(f'/dev/{tty}', os.W_OK):
-        candidate = f'/dev/{tty}'
+        candidate = os.path.realpath(f'/dev/{tty}')
         if candidate.startswith('/dev/'):
             tty_path = candidate
         break
@@ -45,7 +53,7 @@ if session_id:
     sessions_dir = os.path.expanduser('~/.claude/sessions')
     try:
         for fn in os.listdir(sessions_dir):
-            if not fn.endswith('.json'):
+            if not fn.endswith('.json') or not fn[:-5].isdigit():
                 continue
             try:
                 with open(os.path.join(sessions_dir, fn)) as f:
@@ -77,6 +85,11 @@ elif tool == 'Agent':
 elif tool == 'Skill':
     detail = tool_input.get('skill', '')
 
+# Sanitize user-controlled strings before embedding in OSC sequences
+project = _osc_safe(project)
+session_name = _osc_safe(session_name)
+detail = _osc_safe(detail)
+
 # Determine labels based on hook event
 stop_mode = os.environ.get('CLAUDE_HOOK_STOP') == '1'
 if stop_mode:
@@ -85,7 +98,7 @@ if stop_mode:
     if session_name:
         tab_title += f' | {session_name}'
     window_title = f'{icon} {project} | 完了'
-    badge_text = session_name
+    badge_text = session_name  # empty string intentionally clears the badge on stop
     notify = True
 else:
     icon = '\U0001f916'
@@ -102,18 +115,19 @@ else:
 
 if tty_path:
     seq = ''
-    # iTerm2: tab title (\033]1;) and window title (\033]2;)
+    # OSC 1 (icon name / tab title in iTerm2) and OSC 2 (window title)
     seq += f'\033]1;{tab_title}\007'
     seq += f'\033]2;{window_title}\007'
     # iTerm2 badge via OSC 1337 (base64). Non-iTerm2 terminals silently ignore
     # this sequence; tab/window title (OSC 1/2) works on any xterm-compatible terminal.
-    badge_b64 = base64.b64encode(badge_text.encode()).decode()
+    badge_b64 = base64.b64encode(badge_text.encode('utf-8')).decode('utf-8')
     seq += f'\033]1337;SetBadgeFormat={badge_b64}\007'
     if notify:
         notify_msg = f'{project}: {session_name}' if session_name else f'{project}: 完了'
+        # OSC 9 (notification). Most terminals other than iTerm2 ignore this sequence.
         seq += f'\033]9;{notify_msg}\007'
     try:
         with open(tty_path, 'wb') as f:
-            f.write(seq.encode())
+            f.write(seq.encode('utf-8'))
     except OSError:
         pass
