@@ -20,7 +20,11 @@ allowed-tools: Bash, Read, Write, Glob
   3. 連続するハイフンは 1 個に圧縮する
   4. 先頭・末尾のハイフンは削除する
   5. 日本語はそのまま使ってよい
-- **セッション名との連携**: `save` のデフォルトタスク名取得と `load` のセッション名自動設定には、Claude Code が `~/.claude/sessions/{pid}.json` に永続化するセッション名（`/rename` コマンドや plan 承認の自動命名で設定される `name` フィールド）を使う。セッション名が未設定の場合は静かにスキップして会話文脈からの推測に fallback する。
+- **セッション名との連携**: `save` のデフォルトタスク名取得には、Claude Code が `~/.claude/sessions/{pid}.json` に永続化するセッション名（`/rename` コマンドや plan 承認の自動命名で設定される `name` フィールド）を参照する（内部仕様のため将来バージョンで変更の可能性あり。取得失敗時は静かに fallback する）。以下いずれの場合も警告を出さず会話文脈からの推測に fallback する:
+  - `CLAUDE_CODE_SESSION_ID` 環境変数が未定義または空
+  - `~/.claude/sessions/` ディレクトリが存在しない
+  - `sessionId` が一致するファイルが見つからない
+- **`load` 時のセッション名設定**: sessions ファイルへの直接書き込みは行わない。handoff の `task` 名をユーザーに提示し、`/rename` コマンドで手動設定するよう促す。
 
 ## 動作モード
 
@@ -31,10 +35,10 @@ allowed-tools: Bash, Read, Write, Glob
 
 1. タスク名を決定する（優先順位）:
    1. 引数で明示的に渡されたタスク名
-   2. 現在のセッション名（`CLAUDE_CODE_SESSION_ID` 環境変数で session ID を取得し、`~/.claude/sessions/` 内のファイルをスキャンして一致する `sessionId` を持つファイルの `name` フィールドを読む）
+   2. 現在のセッション名（`CLAUDE_CODE_SESSION_ID` 環境変数で session ID を取得し、`~/.claude/sessions/` 内のファイルをスキャンして一致する `sessionId` を持つファイルの `name` フィールドを読む。Bash 例: `grep -rl "\"sessionId\":\"${CLAUDE_CODE_SESSION_ID}\"" ~/.claude/sessions/ 2>/dev/null | head -1`）
    3. 会話の文脈から推測したタスク名
-   - **優先順位 2 の fallback**: セッション名が空または取得できない場合は、警告を出さず静かに優先順位 3（会話文脈から推測）に fallback する。
-   - **セッション名と会話文脈が明らかに食い違う場合**（例: セッション名が別タスクの残骸で、現在の会話は別テーマを扱っている）は、**どちらを採用するかユーザーに短く確認すること**。勝手に保存しない。
+   - **優先順位 2 の fallback**: 以下いずれの場合も警告を出さず静かに優先順位 3（会話文脈から推測）に fallback する: （a）`CLAUDE_CODE_SESSION_ID` が未定義または空、（b）`~/.claude/sessions/` が存在しない、（c）`sessionId` 一致ファイルが見つからない
+   - **セッション名と会話文脈が明らかに食い違う場合**（例: セッション名が別タスクの残骸で、現在の会話は別テーマを扱っている）は、優先順位 2 と 3 が乖離するときに限り**どちらを採用するかユーザーに短く確認すること**。優先順位 1（引数指定）のときは確認しない。
 2. `mkdir -p ~/.claude/handoff` でディレクトリを確保
 3. **保存方針と引き継ぎ値を決定する**（この時点ではまだファイルを作成・削除しない）:
    - **同一タスク名の既存ファイルを検索**: `~/.claude/handoff/` 内で、ファイル名がサニタイズ後タスク名で終わるファイルを Glob で探す。pattern 例: `~/.claude/handoff/*-{サニタイズ後タスク名}.md`
@@ -68,10 +72,8 @@ allowed-tools: Bash, Read, Write, Glob
    - frontmatter の `created` と `updated` が異なる場合は `（作成: YYYY-MM-DD）` を末尾に付けて、元の作成日もわかるようにする
    （番号選択はユーザーの返答を待つ。`load <番号>` で直接指定されていればスキップ）
 4. 選ばれたファイルを Read で読み込み、内容を**そのまま提示**する（提示時の省略ルールは「注意事項」を参照）
-5. frontmatter の `task` を現在のセッション名として**自動設定する**（任意処理。失敗しても load 自体は成功扱い）:
-   - `CLAUDE_CODE_SESSION_ID` 環境変数で session ID を取得する。取得できない場合はこの手順全体をスキップし「セッション名の自動設定はスキップしました」と一言だけ表示する。
-   - `~/.claude/sessions/` 内のファイルをスキャンして一致する `sessionId` を持つファイルを見つけ、`name` フィールドを frontmatter の `task` 値で更新して書き戻す（`json.dump` で上書き）。
-   - 更新した内容を「セッション名を「{タスク名}」に設定しました。」と一言報告する。
+5. ユーザーにセッション名の設定を促す:
+   - frontmatter の `task` 値を使って「セッション名を設定するには `/rename {タスク名}` を実行してください。」と案内する。
 6. 続けて「このhandoffの続きから作業を再開します。次のアクションから着手しますか？」と一言添える
 
 ### `list` — 保存済みhandoff一覧を表示
@@ -96,7 +98,7 @@ allowed-tools: Bash, Read, Write, Glob
 
 ## 注意事項
 
-- **このスキルは `memo` / `task` / `title` スキルとは連携しない**。Claude Code 標準の `/rename` コマンドが書き込む `~/.claude/sessions/{pid}.json` の `name` フィールドのみを参照・更新する。外部 skill への依存はない。
+- **外部 skill への依存はない**。Claude Code 標準の `/rename` コマンドが書き込む `~/.claude/sessions/{pid}.json` の `name` フィールドのみを参照する。
 - `save` 時は会話コンテキストから積極的に情報を抽出して埋めること。空のテンプレートだけ書き出すのは避ける
 - **機微情報は保存しない**: API キー・認証トークン・パスワード・秘密鍵などが会話に含まれていても handoff ファイルには書き出さず、`(redacted)` に置き換える（handoff は平文で `~/.claude/handoff/` に永続化されるため）
 - テンプレート内の `{...}` プレースホルダ・ガイダンス文は最終出力には残さず、必ず実内容で置き換える
