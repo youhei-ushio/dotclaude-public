@@ -29,7 +29,8 @@
       "Skill(pre-implementation-research)",
       "Skill(documentation-standards)",
       "Skill(parallel-setup)",
-      "Skill(review-pr)"
+      "Skill(review-pr)",
+      "Skill(handoff)"
     ],
     "defaultMode": "acceptEdits"
   },
