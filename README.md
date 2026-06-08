@@ -4,6 +4,12 @@
 
 複数マシン間で `~/.claude/` を同期するために、リポを clone してシンボリックリンクを張る運用を想定しています。
 
+> **言語・フレームワーク非依存の core を志向しています。** 汎用 skill / hook は
+> 特定言語に依存せず、TypeScript / .NET / Go / Rails / Laravel など任意のスタックで
+> 使えます。本文に出てくる Laravel / Sail 等は「数ある例の一つ」であり前提では
+> ありません。特定スタックに踏み込んだ資産は後述の「特定スタック前提」で分離し、
+> opt-out できるようにしています。
+
 ## このリポで管理するもの
 
 | 項目 | 配置先 | 役割 |
@@ -123,7 +129,22 @@ done
 | `debug-bar-investigation` | Laravel Debug Bar | データ取得問題の 3 段階調査（再現 → Messages → Queries） |
 | `route-management` | Laravel + Context 構成（DDD / モジュラーモノリス） | `routes/web.php` 直書き禁止、Context の ServiceProvider に集約 |
 
-各 skill は `skills/global/<name>/SKILL.md` 自体に詳細な進め方が書かれている。Claude Code が auto-load してその手順に従う。スタック前提の skill は不要なら symlink を張らない、もしくは `settings.json` の `permissions.allow` から該当行を消す運用で OK。
+各 skill は `skills/global/<name>/SKILL.md` 自体に詳細な進め方が書かれている。Claude Code が auto-load してその手順に従う。
+
+#### 不要なスタック固有 skill の opt-out
+
+PHP/Laravel を使わない場合など、上表の「特定スタック前提」skill が不要なら、以下のいずれか（または両方）で無効化する:
+
+1. **symlink を張らない** — セットアップの global skill ループ（後述）で、該当ディレクトリだけ除外する
+2. **`settings.json` の `permissions.allow` から該当行を消す** — 例: `Skill(livewire-v3-syntax)` / `Skill(route-management)` / `Skill(debug-bar-investigation)` / `Skill(tailwind-enforcement)` を削除
+
+hook 側も同様に、Laravel Sail 専用の `sail-env-inline-block.py` や SQL ワークフロー用の `sql-schema-check.py` / `sql-schema-record.py` が不要なら、`settings.json` の `hooks` 配列から該当エントリを外す（他環境では空振りするだけなので、残しても害はない）。
+
+#### 言語別に fork しない方針
+
+「他言語で使いたい」場合でも **言語ごとにリポを fork しない**ことを推奨する。fork すると `commit-workflow` / `create-pr` のような全言語共通の改善が各 fork に伝播せず drift（同期ズレ）し、二重メンテになる。**単一リポで「言語非依存の core ＋ オプトインな stack 層」** を維持し、必要なスタック固有資産だけを足し引きする運用にする。
+
+将来、特定言語向けの skill / hook を増やす場合も、core を汚さずに `skills/global/` 配下へ「特定スタック前提」として追加し、上記 opt-out 手順で取捨選択できる形を保つ。
 
 ## statusline
 

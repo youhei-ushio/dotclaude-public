@@ -3,7 +3,7 @@ name: playwright-error-detection
 description: |
   Playwright MCP でブラウザ検証する直後に、画面エラーを必ず検出する。
   実装テストでブラウザにアクセスした後の必須手順。
-  PHP デバッグバーのエラー詳細展開時にも参照。
+  フレームワーク固有のエラー UI（PHP デバッグバー等）の詳細展開時にも参照。
 ---
 
 # Playwright によるブラウザエラー検出
@@ -48,9 +48,12 @@ description: |
 
 `mcp__playwright__browser_console_messages` でコンソールエラーも確認。
 
-## PHP デバッグバーのエラー詳細展開
+## フレームワーク固有のエラー UI 展開（例: PHP デバッグバー）
 
-省略されたエラーメッセージは要素クリックで展開:
+スタックによっては画面内にエラー表示ウィジェットを持つ（Laravel の PHP
+デバッグバー、Symfony の Web Profiler、Rails の better_errors 等）。省略
+されたエラーメッセージは要素クリックで展開する。以下は PHP デバッグバーの例
+（セレクタは各ウィジェットに読み替え）:
 
 ```javascript
 () => {

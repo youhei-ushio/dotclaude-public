@@ -42,24 +42,29 @@ description: |
 - ユーザーが承認している
 - コミットメッセージが適切
 - 仕様書が更新されている（機能実装時）
-- **`\Log::info()` 等のデバッグログが削除されている**
+- **デバッグログ（`console.log` / `print` / `Log::info()` 等）が削除されている**
 
 ## デバッグログの確認
 
-コミット前に必ず実行（フレームワークごとの logging API に合わせる）:
+コミット前に必ず実行（言語・フレームワークごとの logging API に合わせる）:
 
-Laravel:
 ```bash
-grep -r "\\Log::info\|\\Log::debug" app/
+# Node.js
+grep -rE "console\.(log|debug)" src/
+# Python
+grep -rE "print\(|logging\.debug" .
+# .NET
+grep -rE "Console\.WriteLine|Debug\.WriteLine" .
+# Go
+grep -rE "fmt\.Print(ln|f)?|log\.Print" .
+# Rails
+grep -rE "Rails\.logger\.(debug|info)" app/
+# Laravel
+grep -rE "\\Log::(info|debug)" app/
 ```
 
-その他言語の例:
-- Node.js: `grep -rE "console\.(log|debug)" src/`
-- Python: `grep -rE "print\(|logging\.debug" .`
-- Rails: `grep -rE "Rails\.logger\.(debug|info)" app/`
-
-デバッグ出力（`Log::info` / `console.log` / `print` 等）は本番に残してはいけない。
-エラーログ（`Log::error` / `console.error` 等）は必要に応じて残す。
+デバッグ出力（`console.log` / `print` / `Log::info` 等）は本番に残してはいけない。
+エラーログ（`console.error` / `Log::error` 等）は必要に応じて残す。
 
 ## 禁止事項
 

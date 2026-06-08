@@ -865,15 +865,18 @@ review-only モードの `docs/temp/pr${N}-review-comment.md` の所有権:
 git diff HEAD~1 HEAD --name-only
 ```
 
-UI 影響あり判定 (いずれか満たせば再走査):
+UI 影響あり判定 (いずれか満たせば再走査)。**下記パターンは一例**なので、
+自プロジェクトのビュー/コンポーネント/ルーティングの配置に読み替える
+(例: React/Next の `app/**`・`pages/**`、Vue の `src/**`、Rails の
+`app/views/**`、Laravel の `resources/views/**`・`.blade.php` 等):
 
 - **(a) パス判定**: ブラウザテスト対象の拡張子/ディレクトリパターンに該当
-  (`.blade.php`, `.vue`, `.tsx`, `.jsx`, `resources/views/**`,
-  `resources/js/**`, `app/(Http/)?Livewire/**` 等)
+  (`.vue`, `.tsx`, `.jsx`, `.razor`, `.blade.php`, ビューディレクトリ配下 等)
 - **(b) スタイル系**: `*.css`, `*.scss`, `tailwind.config.*` に変更あり
-- **(c) ルーティング系**: `routes/web.php`, `routes/api.php` に変更あり
+- **(c) ルーティング系**: ルーティング定義ファイルに変更あり
+  (例: `routes/web.php`, Next の `app/**/page.tsx`, `config/routes.rb` 等)
 - **(d) クラス変更**: コンポーネント class 属性 / Tailwind utility class の追加削除を
-  機械判定 (`git diff HEAD~1 HEAD -- '*.blade.php' '*.vue' '*.tsx' '*.jsx' 'resources/views/**' 'resources/js/**' | grep -E '^[+-].*(class=| class:)'`)
+  機械判定 (`git diff HEAD~1 HEAD -- '*.vue' '*.tsx' '*.jsx' '*.blade.php' <ビューディレクトリ> | grep -E '^[+-].*(class=| class:)'`)
 
 ```text
 if BROWSER_TEST_DONE  # Step 0.4 で判定: PR 本文に「動作確認スクリーン
