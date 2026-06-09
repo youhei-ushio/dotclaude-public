@@ -135,10 +135,10 @@ done
 
 PHP/Laravel を使わない場合など、上表の「特定スタック前提」skill が不要なら、以下のいずれか（または両方）で無効化する:
 
-1. **symlink を張らない** — 前述「セットアップ」の global skill ループで、該当ディレクトリだけ除外する
+1. **symlink を張らない** — 前述「セットアップ」の global skill ループで該当ディレクトリを除外する。ループ実行後に外したい場合は `rm ~/.claude/skills/<name>`（例: `rm ~/.claude/skills/livewire-v3-syntax`）で該当 symlink を消す
 2. **`settings.json` の `permissions.allow` から該当行を消す** — 例: `Skill(livewire-v3-syntax)` / `Skill(route-management)` / `Skill(debug-bar-investigation)` / `Skill(tailwind-enforcement)` を削除
 
-hook 側も同様に、Laravel Sail 専用の `sail-env-inline-block.py` や SQL ワークフロー用の `sql-schema-check.py` / `sql-schema-record.py` が不要なら、`settings.json` の `hooks` 配列から該当エントリを外す（他環境では空振りするだけなので、残しても害はない）。
+hook 側も同様に、Laravel Sail 専用の `sail-env-inline-block.py` や SQL ワークフロー用の `sql-schema-check.py` / `sql-schema-record.py` が不要なら、**symlink を張らない**（前述「セットアップ」の hook ループで除外、または `rm ~/.claude/hooks/<name>.py`）か、**`settings.json` の `hooks` 配列から該当エントリを外す**（他環境では空振りするだけなので、残しても害はない）。
 
 #### 言語別に fork しない方針
 

@@ -46,7 +46,7 @@ description: |
 
 ## デバッグログの確認
 
-コミット前に必ず実行（言語・フレームワークごとの logging API に合わせる）:
+コミット前に必ず実行（自プロジェクトの言語に該当する 1 ブロックのみ実行すればよい。logging API は言語・フレームワークごとに読み替える）:
 
 ```bash
 # Node.js
@@ -60,7 +60,7 @@ grep -rE "fmt\.Print(ln|f)?|log\.Print" .
 # Rails
 grep -rE "Rails\.logger\.(debug|info)" app/
 # Laravel
-grep -rE "\\Log::(info|debug)" app/
+grep -rE "Log::(info|debug)" app/
 ```
 
 デバッグ出力（`console.log` / `print` / `Log::info` 等）は本番に残してはいけない。

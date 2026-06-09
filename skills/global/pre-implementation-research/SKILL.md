@@ -42,8 +42,9 @@ sqlcmd -S <server> -d <database> -Q "
 "
 ```
 
-ORM/フレームワークによっては DB クライアントを直接持たず、アプリ経由のほうが
-楽な場合もある（例: Laravel なら `artisan tinker`、Rails なら `rails dbconsole`）。
+ORM/フレームワークによっては DB クライアントを直接持たず、アプリ経由でスキーマを
+ワンショット取得するほうが楽な場合もある（例: Laravel なら `artisan tinker`、
+Rails なら `rails runner`。`INFORMATION_SCHEMA` は任意の SQL クライアントから実行可）。
 Laravel + laravel-boost MCP を使っているなら `mcp__laravel-boost__database-schema`
 / `database-query` がより便利。
 
