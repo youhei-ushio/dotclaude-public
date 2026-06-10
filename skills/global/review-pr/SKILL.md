@@ -876,7 +876,8 @@ UI 影響あり判定 (いずれか満たせば再走査)。**下記パターン
 - **(c) ルーティング系**: ルーティング定義ファイルに変更あり
   (例: `routes/web.php`, Next の `app/**/page.tsx`, `config/routes.rb` 等)
 - **(d) クラス変更**: コンポーネント class 属性 / Tailwind utility class の追加削除を
-  機械判定 (`git diff HEAD~1 HEAD -- '*.vue' '*.tsx' '*.jsx' '*.blade.php' <ビューディレクトリ> | grep -E '^[+-].*(class=| class:)'`)
+  機械判定 (`git diff HEAD~1 HEAD -- '*.vue' '*.tsx' '*.jsx' '*.blade.php' 'resources/views/**' | grep -E '^[+-].*(class=| class:)'`。
+  末尾のパスは自プロジェクトのビューディレクトリに置き換える。例: Rails `app/views/**`、Vue `src/**`)
 
 ```text
 if BROWSER_TEST_DONE  # Step 0.4 で判定: PR 本文に「動作確認スクリーン

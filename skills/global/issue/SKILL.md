@@ -115,7 +115,7 @@ drawioの色規約（既存図との統一）:
   # Pytest:          pytest
   # Rspec:           bundle exec rspec
   # Laravel + Sail:  docker exec <container> php artisan test
-  # PHPUnit:         ./vendor/bin/phpunit
+  # PHPUnit (Sail 非使用時): ./vendor/bin/phpunit  ※Sail 環境ではコンテナ内で実行する
   ```
 - **成果物がドキュメントのみ（設計資料、仕様書等）でコード変更がない場合、テスト実行・ブラウザテストケース追加・ブラウザテスト実行（ステップ11・12）はスキップする**
 - **設計資料にフロー図や構成図を含める場合は、drawio形式で作成し、SVGにエクスポートしてMarkdownに埋め込む**

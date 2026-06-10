@@ -135,7 +135,7 @@ done
 
 PHP/Laravel を使わない場合など、上表の「特定スタック前提」skill が不要なら、以下で無効化する。**手順 1（symlink を消す）が主**で、これだけで skill ファイル自体が `~/.claude/` から無くなり auto-load も止まる。手順 2 は補助。
 
-1. **symlink を張らない / 消す（主）** — 前述「セットアップ」の global skill ループは `for d in .../skills/global/*/` の glob 展開なので、特定ディレクトリだけを除外するより、**ループは全張りし、後から `rm ~/.claude/skills/<name>` で外す**運用が確実（例: `rm ~/.claude/skills/livewire-v3-syntax`）。これで symlink が消え、当該 skill は読み込まれなくなる
+1. **symlink を張らない / 消す（主）** — 前述「セットアップ」の global skill ループは `for d in .../skills/global/*/` の glob 展開なので、特定ディレクトリだけを除外するより、**ループは全張りし、後から `rm ~/.claude/skills/<name>` で外す**運用が確実（例: `rm ~/.claude/skills/livewire-v3-syntax`）。これで symlink が消え、当該 skill は読み込まれなくなる。ただし `rm` 後にセットアップループを再実行すると symlink は復活するため、**恒久的に除外したいときは setup ループ側で当該ディレクトリを除外する**（または `rm` をセットアップ手順に組み込む）
 2. **`settings.json` の `permissions.allow` から該当行を消す（補助）** — 例: `Skill(livewire-v3-syntax)` / `Skill(route-management)` / `Skill(debug-bar-investigation)` / `Skill(tailwind-enforcement)` を削除。これは「skill 実行時に確認を挟まない」allowlist を外すだけで、auto-load 自体を止める保証は Claude Code の内部挙動依存。確実に無効化したいときは手順 1 を使う
 
 hook 側も同様に、Laravel Sail 専用の `sail-env-inline-block.py` や SQL ワークフロー用の `sql-schema-check.py` / `sql-schema-record.py` が不要なら、**symlink を張らない**（前述「セットアップ」の hook ループで除外、または `rm ~/.claude/hooks/<name>.py`）か、**`settings.json` の `hooks` 配列から該当エントリを外す**（他環境では空振りするだけなので、残しても害はない）。

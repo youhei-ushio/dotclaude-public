@@ -46,7 +46,7 @@ description: |
 
 ## デバッグログの確認
 
-コミット前に必ず実行（自プロジェクトの言語に該当する 1 ブロックのみ実行すればよい。logging API・探索起点はいずれも一例なので、言語・フレームワーク・ディレクトリ構成に合わせて読み替える）:
+コミット前に必ず実行（自プロジェクトの言語に該当する 1 ブロックのみ実行すればよい。下記は単一の bash ブロックに 6 言語を並べているので、不要な言語行は削除して使う。logging API・探索起点はいずれも一例なので、言語・フレームワーク・ディレクトリ構成に合わせて読み替える）:
 
 ```bash
 # Node.js
@@ -55,7 +55,7 @@ grep -rE "console\.(log|debug)" src/
 grep -rE "print\(|logging\.debug" .
 # .NET
 grep -rE "Console\.WriteLine|Debug\.WriteLine" .
-# Go（fmt.Print 系は正規の標準出力にも使われるため誤検出に注意）
+# Go（fmt.Print 系・log.Print 系は正規の標準出力／本番ロガーにも使われるため誤検出に注意）
 grep -rE "fmt\.Print(ln|f)?|log\.Print" .
 # Rails
 grep -rE "Rails\.logger\.(debug|info)" app/
