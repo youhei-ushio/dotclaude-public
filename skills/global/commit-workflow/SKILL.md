@@ -46,7 +46,7 @@ description: |
 
 ## デバッグログの確認
 
-コミット前に必ず実行（自プロジェクトの言語に該当する 1 ブロックのみ実行すればよい。logging API は言語・フレームワークごとに読み替える）:
+コミット前に必ず実行（自プロジェクトの言語に該当する 1 ブロックのみ実行すればよい。logging API・探索起点はいずれも一例なので、言語・フレームワーク・ディレクトリ構成に合わせて読み替える）:
 
 ```bash
 # Node.js
@@ -55,13 +55,15 @@ grep -rE "console\.(log|debug)" src/
 grep -rE "print\(|logging\.debug" .
 # .NET
 grep -rE "Console\.WriteLine|Debug\.WriteLine" .
-# Go
+# Go（fmt.Print 系は正規の標準出力にも使われるため誤検出に注意）
 grep -rE "fmt\.Print(ln|f)?|log\.Print" .
 # Rails
 grep -rE "Rails\.logger\.(debug|info)" app/
 # Laravel
 grep -rE "Log::(info|debug)" app/
 ```
+
+探索起点（`src/` / `app/` / `.`）も一例。`.` 起点は `node_modules` やドキュメント等のノイズを拾いやすいので、実コードのディレクトリに絞ると精度が上がる。
 
 デバッグ出力（`console.log` / `print` / `Log::info` 等）は本番に残してはいけない。
 エラーログ（`console.error` / `Log::error` 等）は必要に応じて残す。
