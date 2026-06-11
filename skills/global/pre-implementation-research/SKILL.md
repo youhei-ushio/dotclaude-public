@@ -35,8 +35,9 @@ psql -d <database> -c "\d+ <table_name>"
 
 ```bash
 # INFORMATION_SCHEMA はベンダ非依存。任意のクライアントから同じ SQL を実行できる
-# 認証フラグ（-U/-P か統合認証の -E）は環境に応じて付与する。Linux/Docker では通常 -U/-P が必要
-sqlcmd -S <server> -d <database> -U <user> -P <password> -Q "
+# 認証は統合認証 -E（Windows）を第一候補に。Linux/Docker では -U <user> のみ指定し
+# パスワードはプロンプト入力させる。-P <password> の CLI 平文渡しはシェル履歴・ps に露出するため避ける
+sqlcmd -S <server> -d <database> -E -Q "
   SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH
   FROM INFORMATION_SCHEMA.COLUMNS
   WHERE TABLE_NAME = '<table_name>';

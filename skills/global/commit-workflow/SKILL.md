@@ -55,8 +55,8 @@ grep -rE "console\.(log|debug)" src/
 grep -rE "print\(|logging\.debug" .
 # .NET
 grep -rE "Console\.WriteLine|Debug\.WriteLine" .
-# Go（fmt.Print 系・log.Print 系は正規の標準出力／本番ロガーにも使われるため誤検出に注意）
-grep -rE "fmt\.Print(ln|f)?|log\.Print" .
+# Go（fmt.Print 系・log.Print 系は正規の標準出力／本番ロガーにも使われるため誤検出に注意。vendor/ のノイズが大きいので除外推奨）
+grep -rE --exclude-dir=vendor "fmt\.Print(ln|f)?|log\.Print" .
 # Rails
 grep -rE "Rails\.logger\.(debug|info)" app/
 # Laravel

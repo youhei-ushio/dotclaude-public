@@ -114,7 +114,7 @@ done
 | `pre-implementation-research` | 実装着手前の DB スキーマ実取得 + 仕様書確認 + serena 優先での既存実装把握 |
 | `documentation-standards` | docs/ 配下のディレクトリ構造・命名規則・顧客向け/開発者向けの書き分けと PDF 生成手順 |
 | `create-manual` | feature PR とセットで現場向け操作マニュアルを作成。物理名 → 業務語の置換ルール / レビュー観点チェックリスト / スクショ撮影手順 / マニュアル雛形を内包 |
-| `issue` | Issue 番号指定で「main 取得 → 設計書ゲート → 実装 → テスト → PR → レビュー → マニュアル → ブラウザテスト」を一括実行（Laravel + Livewire を例として説明） |
+| `issue` | Issue 番号指定で「main 取得 → 設計書ゲート → 実装 → テスト → PR → レビュー → マニュアル → ブラウザテスト」を一括実行（手順自体はフレームワーク非依存。テスト/PR 等の具体例として Laravel + Sail 等を併記） |
 | `parallel-setup` | 並走 clone（worktree でない独立 clone を 4〜7 本）を立てる pattern と手順。役割（feature/hotfix/PoC/refactor 等）別の分担、COMPOSE_PROJECT_NAME / ポート / .mcp.json の isolation、`parallel-notification.py` hook の wiring、共有 DB の扱い、運用 Tips |
 | `review-permissions` | 蓄積された許可要求ログ（`permission-request-logger.py` が記録）をクラスタ単位で対話レビューし、allowlist 追加 / skill 化 / hook 化 / スクリプト化 / 都度確認継続 を判断 |
 | `review-pr` | 指定 PR をセルフレビュー。Reviewer A/B + Fact-checker の 3 エージェント並列構成（worktree 分離）。自分が author の PR は最大 5 巡で auto-fix モード、collaborator の PR は自動的に review-only モードで GitHub に summary review コメントを投稿（`--review-only` / `--fix` で明示 override 可）|
@@ -133,9 +133,9 @@ done
 
 #### 不要なスタック固有 skill の opt-out
 
-PHP/Laravel を使わない場合など、上表の「特定スタック前提」skill が不要なら、以下で無効化する。**手順 1（symlink を消す）が主**で、これだけで skill ファイル自体が `~/.claude/` から無くなり auto-load も止まる。手順 2 は補助。
+PHP/Laravel を使わない場合など、上表の「特定スタック前提」skill が不要なら、以下で無効化する。**手順 1（symlink を消す）が主**で、これだけで `~/.claude/` 側の symlink が外れ auto-load も止まる（skill の実体はリポに残るだけで消えない）。手順 2 は補助。
 
-1. **symlink を張らない / 消す（主）** — 前述「セットアップ」の global skill ループは `for d in .../skills/global/*/` の glob 展開なので、特定ディレクトリだけを除外するより、**ループは全張りし、後から `rm ~/.claude/skills/<name>` で外す**運用が確実（例: `rm ~/.claude/skills/livewire-v3-syntax`）。これで symlink が消え、当該 skill は読み込まれなくなる。ただし `rm` 後にセットアップループを再実行すると symlink は復活するため、**恒久的に除外したいときは setup ループ側で当該ディレクトリを除外する**（または `rm` をセットアップ手順に組み込む）
+1. **symlink を張らない / 消す（主）** — 前述「セットアップ」の global skill ループは `for d in .../skills/global/*/` の glob 展開なので、特定ディレクトリだけを除外するより、**ループは全張りし、後から `rm ~/.claude/skills/<name>` で外す**運用が確実（例: `rm ~/.claude/skills/livewire-v3-syntax`）。これで symlink が外れ、当該 skill は読み込まれなくなる（実体はリポに残る）。ただし `rm` 後にセットアップループを再実行すると symlink は復活するため、**恒久的に除外したいときは setup ループ側で当該ディレクトリを除外する**（例: `for d in $(ls -d .../skills/global/*/ | grep -v '/livewire-v3-syntax/'); do ...; done`、または対象を明示列挙する）か、`rm` をセットアップ手順に組み込む
 2. **`settings.json` の `permissions.allow` から該当行を消す（補助）** — 例: `Skill(livewire-v3-syntax)` / `Skill(route-management)` / `Skill(debug-bar-investigation)` / `Skill(tailwind-enforcement)` を削除。これは「skill 実行時に確認を挟まない」allowlist を外すだけで、auto-load 自体を止める保証は Claude Code の内部挙動依存。確実に無効化したいときは手順 1 を使う
 
 hook 側も同様に、Laravel Sail 専用の `sail-env-inline-block.py` や SQL ワークフロー用の `sql-schema-check.py` / `sql-schema-record.py` が不要なら、**symlink を張らない**（前述「セットアップ」の hook ループで除外、または `rm ~/.claude/hooks/<name>.py`）か、**`settings.json` の `hooks` 配列から該当エントリを外す**（他環境では空振りするだけなので、残しても害はない）。
