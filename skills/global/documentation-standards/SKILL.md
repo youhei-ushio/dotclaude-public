@@ -69,7 +69,7 @@ description: |
 ### ADR 専用ルール
 
 - ファイル名: `{4桁連番}-{kebab-case-title}.md`
-- 例: `0001-use-livewire-v3.md`, `0042-introduce-event-sourcing.md`
+- 例: `0001-adopt-feature-flags.md`, `0042-introduce-event-sourcing.md`
 - 連番は `docs/adr/` 内の最大値+1（既存を確認してから採番）
 
 ### リリースノート専用ルール

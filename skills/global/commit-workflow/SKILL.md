@@ -42,24 +42,31 @@ description: |
 - ユーザーが承認している
 - コミットメッセージが適切
 - 仕様書が更新されている（機能実装時）
-- **`\Log::info()` 等のデバッグログが削除されている**
+- **デバッグログ（`console.log` / `print` / `Log::info()` 等）が削除されている**
 
 ## デバッグログの確認
 
-コミット前に必ず実行（フレームワークごとの logging API に合わせる）:
+コミット前に必ず実行（自プロジェクトの言語に該当する 1 ブロックのみ実行すればよい。下記は単一の bash ブロックに 6 言語を並べているので、不要な言語行は削除して使う。logging API・探索起点はいずれも一例なので、言語・フレームワーク・ディレクトリ構成に合わせて読み替える）:
 
-Laravel:
 ```bash
-grep -r "\\Log::info\|\\Log::debug" app/
+# Node.js
+grep -rE "console\.(log|debug)" src/
+# Python
+grep -rE "print\(|logging\.debug" .
+# .NET
+grep -rE "Console\.WriteLine|Debug\.WriteLine" .
+# Go（fmt.Print 系・log.Print 系は正規の標準出力／本番ロガーにも使われるため誤検出に注意。vendor/ のノイズが大きいので除外推奨）
+grep -rE --exclude-dir=vendor "fmt\.Print(ln|f)?|log\.Print" .
+# Rails
+grep -rE "Rails\.logger\.(debug|info)" app/
+# Laravel
+grep -rE "Log::(info|debug)" app/
 ```
 
-その他言語の例:
-- Node.js: `grep -rE "console\.(log|debug)" src/`
-- Python: `grep -rE "print\(|logging\.debug" .`
-- Rails: `grep -rE "Rails\.logger\.(debug|info)" app/`
+探索起点（`src/` / `app/` / `.`）も一例。`.` 起点は `node_modules` やドキュメント等のノイズを拾いやすいので、実コードのディレクトリに絞ると精度が上がる。
 
-デバッグ出力（`Log::info` / `console.log` / `print` 等）は本番に残してはいけない。
-エラーログ（`Log::error` / `console.error` 等）は必要に応じて残す。
+デバッグ出力（`console.log` / `print` / `Log::info` 等）は本番に残してはいけない。
+エラーログ（`console.error` / `Log::error` 等）は必要に応じて残す。
 
 ## 禁止事項
 

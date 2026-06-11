@@ -10,8 +10,9 @@ allowed-tools: Read, Grep, Glob, Bash, Edit, Write, Task
 
 GitHub Issue の対応を一括で実行します。mainブランチの最新取得からPRレビューまでを自動的に行います。
 
-本 skill は **Laravel + Livewire + Docker (Sail) を例として** 書かれていますが、
-コマンド・パス・テストランナーは自プロジェクトに合わせて読み替えてください。
+本 skill は **フレームワーク非依存** です。本文中に登場するコマンド・パス・
+テストランナーの具体例（Laravel + Sail / npm / dotnet / cargo 等）は一例に
+過ぎないので、自プロジェクトのスタックに合わせて読み替えてください。
 ドキュメント配置ルール・MUSTルールも convention の一例なので、必要に応じて
 カスタマイズします。
 
@@ -107,11 +108,14 @@ drawioの色規約（既存図との統一）:
 - 実装完了後、全テストを実行して通過を確認:
   ```bash
   # 例（自プロジェクトのテストコマンドに置換）:
-  # Laravel + Sail:  docker exec <container> php artisan test
-  # PHPUnit:         ./vendor/bin/phpunit
-  # Jest:            npm test
-  # Rspec:           bundle exec rspec
+  # Jest/Vitest:     npm test
+  # .NET:            dotnet test
+  # Go:              go test ./...
+  # Cargo:           cargo test
   # Pytest:          pytest
+  # Rspec:           bundle exec rspec
+  # Laravel + Sail:  docker exec <container> php artisan test
+  # PHPUnit (Sail 非使用時): ./vendor/bin/phpunit  ※Sail 環境ではコンテナ内で実行する
   ```
 - **成果物がドキュメントのみ（設計資料、仕様書等）でコード変更がない場合、テスト実行・ブラウザテストケース追加・ブラウザテスト実行（ステップ11・12）はスキップする**
 - **設計資料にフロー図や構成図を含める場合は、drawio形式で作成し、SVGにエクスポートしてMarkdownに埋め込む**

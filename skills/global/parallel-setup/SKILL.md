@@ -11,10 +11,11 @@ allowed-tools: Read, Grep, Glob, Bash, Edit, Write
 git worktree ではなく、**独立した clone を複数（典型的に 4〜7 本）並走** させて、
 role 別に作業を割り当てるパターン。docker-compose ベースの開発で特に有効。
 
-> **本 skill の具体例は Laravel + Sail を主に想定して書かれています**が、
-> 考え方（命名規約・isolation・通知 hook の wiring 等）は docker-compose 系の
-> 任意のスタックに適用できます。コマンドやファイル名は自プロジェクトに読み
-> 替えてください。
+> **本 skill はフレームワーク非依存**です。考え方（命名規約・isolation・
+> 通知 hook の wiring 等）は docker-compose で動く任意のスタック（Node /
+> .NET / Go / Rails / Laravel 等）に適用できます。本文中のコマンドは
+> 素の `docker compose` で書いていますが、Laravel Sail なら
+> `./vendor/bin/sail`、その他のラッパーがあればそれぞれに読み替えてください。
 
 ## なぜ worktree でなく独立 clone か
 
@@ -296,7 +297,7 @@ PROJECT=myapp
 
 # 1. 全 parallel をバックグラウンドで起動（並列）
 for N in 1 2 3 4 5 6 7; do
-  (cd ~/repos/${PROJECT}-parallel-${N} && ./vendor/bin/sail up -d) &
+  (cd ~/repos/${PROJECT}-parallel-${N} && docker compose up -d) &
 done
 wait
 
@@ -366,7 +367,7 @@ docker ps --format '{{.Names}}' | grep -E "^${PROJECT}[0-9]+-"
 TARGET_N=3   # 検証対象（自由に選ぶ）
 EXPECTED=$(docker ps --filter "name=${PROJECT}${TARGET_N}-" -q | wc -l)
 BEFORE=$(docker ps -q | wc -l)
-(cd ~/repos/${PROJECT}-parallel-${TARGET_N} && ./vendor/bin/sail stop)
+(cd ~/repos/${PROJECT}-parallel-${TARGET_N} && docker compose stop)
 AFTER=$(docker ps -q | wc -l)
 DIFF=$((BEFORE - AFTER))
 
@@ -436,7 +437,7 @@ parallel 専用コンテナ** の二段配置にすると安全:
 ```bash
 # 1. コンテナ停止 + 削除
 cd ~/repos/<project>-parallel-N
-./vendor/bin/sail down  # -v は付けない
+docker compose down  # -v は付けない
 
 # 2. ディレクトリ削除
 cd ~

@@ -17,17 +17,12 @@ description: |
 ### MySQL
 
 ```bash
-# Laravel Sail の場合
-./vendor/bin/sail mysql -e "SHOW CREATE TABLE <table_name>;"
-./vendor/bin/sail mysql -e "DESCRIBE <table_name>;"
-
-# または Tinker 経由
-./vendor/bin/sail artisan tinker --execute="
-  print_r(DB::select('SHOW CREATE TABLE <table_name>'));
-"
-
-# Sail を使っていない環境
+# DB クライアントで直接（最も汎用的）
 mysql -u <user> -p -e "SHOW CREATE TABLE <table_name>;" <database>
+mysql -u <user> -p -e "DESCRIBE <table_name>;" <database>
+
+# コンテナ越しに叩く場合の一例（Laravel Sail）
+./vendor/bin/sail mysql -e "SHOW CREATE TABLE <table_name>;"
 ```
 
 ### PostgreSQL
@@ -39,16 +34,19 @@ psql -d <database> -c "\d+ <table_name>"
 ### SQL Server
 
 ```bash
-# 例: 別 DB を Laravel から参照しているケース（コネクション名で指定）
-./vendor/bin/sail artisan tinker --execute="
-  print_r(DB::connection('<connection-name>')->select(\"
-    SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH
-    FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_NAME = '<table_name>'
-  \"));
+# INFORMATION_SCHEMA はベンダ非依存。任意のクライアントから同じ SQL を実行できる
+# 認証は統合認証 -E（Windows）を第一候補に。Linux/Docker では -U <user> のみ指定し
+# パスワードはプロンプト入力させる。-P <password> の CLI 平文渡しはシェル履歴・ps に露出するため避ける
+sqlcmd -S <server> -d <database> -E -Q "
+  SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH
+  FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_NAME = '<table_name>';
 "
 ```
 
+ORM/フレームワークによっては DB クライアントを直接持たず、アプリ経由でスキーマを
+ワンショット取得するほうが楽な場合もある（例: Laravel なら `artisan tinker`、
+Rails なら `rails runner`。`INFORMATION_SCHEMA` は任意の SQL クライアントから実行可）。
 Laravel + laravel-boost MCP を使っているなら `mcp__laravel-boost__database-schema`
 / `database-query` がより便利。
 
