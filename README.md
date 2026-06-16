@@ -16,9 +16,10 @@
 |---|---|---|
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` | global ルール（言語・コード discovery 方針 等） |
 | `settings.json` | `~/.claude/settings.json` | env / permissions / hooks のサンプル設定 |
-| `statusline.sh` | `~/.claude/statusline.sh` | 最大 4 行構成のカスタム statusline（pending review / awaiting 行を含む） |
+| `statusline.sh` | `~/.claude/statusline.sh` | 最大 3 行構成のカスタム statusline（pending review 行を含む） |
 | `hooks/` | `~/.claude/hooks/` | PreToolUse / PostToolUse / PermissionRequest / UserPromptSubmit / SessionStart / Notification / Stop の hook スクリプト |
 | `skills/global/` | `~/.claude/skills/` | プロジェクト非依存の global skill |
+| `tmux-grid.sh` | （リポ直下で直接実行） | 並走 worktree を 3×2 の tmux グリッドで起動するランチャ（symlink せず `./tmux-grid.sh` で使う。`DIR_PREFIX` 等は環境変数で上書き） |
 
 ## 前提ツール
 
@@ -36,6 +37,8 @@
 | `npx` (Node.js) | `pdf` skill が `md-to-pdf` を呼ぶ |
 | `drawio` CLI + `Xvfb` | `run-drawio-export.sh` hook（drawio → SVG 変換） |
 | `powershell.exe` + Windows Terminal | `parallel-notification.py` hook（WSL2 限定の WPF 通知） |
+| `powershell.exe`（WSL2、任意） | `notify-sound.sh` hook が WSL2 で Windows の通知音を鳴らす場合（native Linux では `paplay` 等で代替、無ければ無音） |
+| `tmux` | `tmux-grid.sh` / `tmux-pane-awaiting.sh`（並走ペインのボーダーで応答待ち/完了を表示） |
 | Google Chrome / Chromium | `pdf` skill の PDF レンダリング（md-to-pdf 経由） |
 | `fonts-ipafont-gothic` | `pdf` skill で日本語マニュアル生成時の文字化け回避 |
 | `pip` (Python パッケージマネージャ) | `pdf-read` skill が初回実行時に `pypdfium2` / `Pillow` / `pdfplumber` を自動 install |
@@ -87,12 +90,14 @@ done
 | `skill-enforcer.py` | PreToolUse / Bash | skill 対応コマンドを直接 Bash で叩いた際に block し対応 skill へ誘導 | 汎用 |
 | `serena-enforcer.py` | PreToolUse / Bash | `grep` / `find` / `cat` でのコード探索を block し [serena](https://github.com/oraios/serena) MCP へ誘導 | serena MCP 利用前提 |
 | `git-push-merged-pr-check.py` | PreToolUse / Bash | `git push` 時に現在ブランチが MERGED PR を持つなら block | `gh` CLI が必要 |
+| `destructive-guard.py` | PreToolUse / Bash | broad allowlist 下でも自動承認されうる「git でも復旧不可 / 高被害」なコマンド形（`find -delete` / force push / `git clean -f` / `~/.claude`・`~/.ssh`・システムパスへの上書き等）だけを block する二重防御。末尾に `# via:destructive-ok: <理由>` を付ければ bypass | 汎用 |
 | `sail-env-inline-block.py` | PreToolUse / Bash | `COMPOSE_PROJECT_NAME=... ./vendor/bin/sail ...` のインライン環境変数指定を block | Laravel Sail 利用時のみ意味あり（他環境では空振り） |
 | `sql-schema-check.py` | PreToolUse / Write | `.sql` ファイル書き込み時に参照テーブルが事前確認済みかバリデート | 汎用（SQL を書く Claude セッション向け） |
 | `sql-schema-record.py` | PostToolUse / Bash | スキーマ照会クエリを検出してセッション内 state に記録（上の check と対） | 同上 |
 | `parallel-notification.py` | Notification / Stop | 並走 clone（`*-parallel-N`）環境向け WPF ポップアップ通知 + Windows Terminal タブ focus | **WSL2 + Windows Terminal + powershell.exe 前提** |
+| `notify-sound.sh` | Notification / PermissionRequest / Stop | クロスプラットフォームな通知音（WSL2 は powershell.exe で Windows 音、native Linux は `paplay`/`pw-play`/`ffplay`/`aplay`）。常に exit 0 | 汎用（再生手段が無ければ無音で no-op） |
 | `permission-request-logger.py` | PermissionRequest | 許可ダイアログの内容を `~/.claude/logs/permission-requests.jsonl` に JSONL 記録（`/review-permissions` skill でまとめてレビューする用）。秘密値を含みうるため 0o600 で書き込み | 汎用（`/review-permissions` skill と対） |
-| `awaiting-parallel.py` | PermissionRequest / UserPromptSubmit / PostToolUse / SessionStart | 並走 clone（`<project>-parallel-N`）で「どの parallel が応答待ちか」を `~/.claude/state/awaiting.tsv` に記録し statusline 4 行目に表示 | 並走 clone 運用向け（単一セッションでは parallel 0 で空振り） |
+| `tmux-pane-awaiting.sh` | UserPromptSubmit / PostToolUse / PermissionRequest / Stop / SessionStart | tmux 6 ペイングリッド（`tmux-grid.sh`）運用時、発火ペインのボーダー色で状態を示す（応答待ち=赤 / 完了=緑 / 作業中=無印）。statusline は各ペイン最下部で埋もれるため、ボーダー側に出す | tmux 6 ペイングリッド運用向け（tmux 外では何もしない） |
 | `run-drawio-export.sh` | （手動 / skill から） | drawio → SVG 変換ラッパー（Xvfb + drawio） | drawio CLI が必要 |
 
 `parallel-notification.py` は WSL2 上の特殊用途なので、他環境で使う場合は無効化するか各自書き換える想定。
@@ -117,6 +122,7 @@ done
 | `issue` | Issue 番号指定で「main 取得 → 設計書ゲート → 実装 → テスト → PR → レビュー → マニュアル → ブラウザテスト」を一括実行（手順自体はフレームワーク非依存。テスト/PR 等の具体例として Laravel + Sail 等を併記） |
 | `parallel-setup` | 並走 clone（worktree でない独立 clone を 4〜7 本）を立てる pattern と手順。役割（feature/hotfix/PoC/refactor 等）別の分担、COMPOSE_PROJECT_NAME / ポート / .mcp.json の isolation、`parallel-notification.py` hook の wiring、共有 DB の扱い、運用 Tips |
 | `review-permissions` | 蓄積された許可要求ログ（`permission-request-logger.py` が記録）をクラスタ単位で対話レビューし、allowlist 追加 / skill 化 / hook 化 / スクリプト化 / 都度確認継続 を判断 |
+| `add-hook` | 新しい hook を本リポに追加し `settings.json` への配線・検証・テストまでを型化。「settings 参照 hook がファイル欠落で全 tool を block する」致命事故を防ぐ |
 | `review-pr` | 指定 PR をセルフレビュー。Reviewer A/B + Fact-checker の 3 エージェント並列構成（worktree 分離）。自分が author の PR は最大 5 巡で auto-fix モード、collaborator の PR は自動的に review-only モードで GitHub に summary review コメントを投稿（`--review-only` / `--fix` で明示 override 可）|
 | `handoff` | 作業状態を `~/.claude/handoff/` の Markdown に保存し、後で読み込んで続きから再開（`save` / `load` / `list`）。セッション跨ぎの引き継ぎやタスク切り替えに使う。`save` デフォルトタスク名は `/rename` 由来のセッション名（`~/.claude/sessions/`）を参照し、未設定でも会話文脈から推測して動作する |
 | `systematic-debugging` | バグ原因究明の系統的規律。根本原因を掴む前に修正しない大原則 + 4 フェーズ（計測でデータフロー遡及 → working/broken 差分 → 単一仮説 1 変数検証 → 失敗テスト先行で 1 点修正）。「3 回失敗したらアーキを疑う」等。serena / 既存の検証手段と接続。スタック固有のデータ調査 skill があればフェーズ 1 の具体手段として併用 |
@@ -149,14 +155,16 @@ hook 側も同様に、Laravel Sail 専用の `sail-env-inline-block.py` や SQL
 
 ## statusline
 
-`statusline.sh` は最大 4 行構成（3・4 行目は該当が無ければ非表示）:
+`statusline.sh` は最大 3 行構成（3 行目は該当が無ければ非表示）:
 
 - **1 行目**: セッション名 / Git ブランチ / カレントディレクトリ
 - **2 行目**: モデル名 / コンテキスト使用率バー（70% で黄・90% で赤）/ セッションコスト / レートリミット
 - **3 行目**: 未レビュー許可要求の件数（`permission-request-logger.py` が記録したログの行数。`/review-permissions` で棚卸し）
-- **4 行目**: 応答待ち parallel 一覧（`awaiting-parallel.py` が記録した `awaiting.tsv` を集約。`P1, P3` 形式）
 
 依存: `jq`、`git`。
+
+> 並走 clone を tmux 6 ペイングリッドで動かす場合の「どのペインが応答待ちか」は、
+> statusline ではなく `tmux-grid.sh` + `tmux-pane-awaiting.sh` によるペインボーダー表示で扱う。
 
 ## 運用ポリシー
 

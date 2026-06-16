@@ -1,9 +1,8 @@
 #!/bin/bash
-# Claude Code statusline - 最大4行構成
+# Claude Code statusline - 最大3行構成
 # 1行目: セッション名 | ブランチ | ディレクトリ
 # 2行目: モデル | コンテキストバー | コスト | 5h/7dレートリミット
 # 3行目: 未レビュー許可要求の件数 (pending review、0 件のときは非表示)
-# 4行目: 応答待ち parallel 一覧 (awaiting、0 件のときは非表示)
 
 input=$(cat)
 
@@ -81,33 +80,9 @@ if [ -s "$PERM_LOG" ]; then
     fi
 fi
 
-# --- 4行目: 応答待ち parallel 一覧 (件数 > 0 のときのみ) ---
-AWAIT_FILE="$HOME/.claude/state/awaiting.tsv"
-LINE4=""
-if [ -s "$AWAIT_FILE" ]; then
-    NOW=$(date +%s)
-    # 14400 sec = 4 時間。hooks/awaiting-parallel.py の STALE_TTL_SEC と同値。
-    # 両者が独立進化しないよう、変更時は両方更新すること。
-    THRESHOLD=$((NOW - 14400))
-    # $2 (parallel_num) と $3 (ts) の両方が数値であることを正規表現で確認
-    # してから比較 (破損行への耐性、Python 側 validate と独立に守る)。
-    # 表示は `P1, P3, P5` の形式 (カンマ後にスペース)。
-    WAITING=$(awk -v t="$THRESHOLD" -F'\t' '$2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $3 >= t {print $2}' "$AWAIT_FILE" 2>/dev/null \
-        | sort -un \
-        | sed 's/^/P/' \
-        | paste -sd ',' - \
-        | sed 's/,/, /g')
-    if [ -n "$WAITING" ]; then
-        LINE4="${CYAN}⏳ awaiting: ${WAITING}${RESET}"
-    fi
-fi
-
 # --- 出力 ---
 echo "$LINE1"
 echo "$LINE2"
 if [ -n "$LINE3" ]; then
     echo "$LINE3"
-fi
-if [ -n "$LINE4" ]; then
-    echo "$LINE4"
 fi
