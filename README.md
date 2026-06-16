@@ -36,7 +36,6 @@
 |---|---|
 | `npx` (Node.js) | `pdf` skill が `md-to-pdf` を呼ぶ |
 | `drawio` CLI + `Xvfb` | `run-drawio-export.sh` hook（drawio → SVG 変換） |
-| `powershell.exe` + Windows Terminal | `parallel-notification.py` hook（WSL2 限定の WPF 通知） |
 | `powershell.exe`（WSL2、任意） | `notify-sound.sh` hook が WSL2 で Windows の通知音を鳴らす場合（native Linux では `paplay` 等で代替、無ければ無音） |
 | `tmux` | `tmux-grid.sh` / `tmux-pane-awaiting.sh`（並走ペインのボーダーで応答待ち/完了を表示） |
 | Google Chrome / Chromium | `pdf` skill の PDF レンダリング（md-to-pdf 経由） |
@@ -94,13 +93,10 @@ done
 | `sail-env-inline-block.py` | PreToolUse / Bash | `COMPOSE_PROJECT_NAME=... ./vendor/bin/sail ...` のインライン環境変数指定を block | Laravel Sail 利用時のみ意味あり（他環境では空振り） |
 | `sql-schema-check.py` | PreToolUse / Write | `.sql` ファイル書き込み時に参照テーブルが事前確認済みかバリデート | 汎用（SQL を書く Claude セッション向け） |
 | `sql-schema-record.py` | PostToolUse / Bash | スキーマ照会クエリを検出してセッション内 state に記録（上の check と対） | 同上 |
-| `parallel-notification.py` | Notification / Stop | 並走 clone（`*-parallel-N`）環境向け WPF ポップアップ通知 + Windows Terminal タブ focus | **WSL2 + Windows Terminal + powershell.exe 前提** |
 | `notify-sound.sh` | Notification / PermissionRequest / Stop | クロスプラットフォームな通知音（WSL2 は powershell.exe で Windows 音、native Linux は `paplay`/`pw-play`/`ffplay`/`aplay`）。常に exit 0 | 汎用（再生手段が無ければ無音で no-op） |
 | `permission-request-logger.py` | PermissionRequest | 許可ダイアログの内容を `~/.claude/logs/permission-requests.jsonl` に JSONL 記録（`/review-permissions` skill でまとめてレビューする用）。秘密値を含みうるため 0o600 で書き込み | 汎用（`/review-permissions` skill と対） |
 | `tmux-pane-awaiting.sh` | UserPromptSubmit / PostToolUse / PermissionRequest / Stop / SessionStart | tmux 6 ペイングリッド（`tmux-grid.sh`）運用時、発火ペインのボーダー色で状態を示す（応答待ち=赤 / 完了=緑 / 作業中=無印）。statusline は各ペイン最下部で埋もれるため、ボーダー側に出す | tmux 6 ペイングリッド運用向け（tmux 外では何もしない） |
 | `run-drawio-export.sh` | （手動 / skill から） | drawio → SVG 変換ラッパー（Xvfb + drawio） | drawio CLI が必要 |
-
-`parallel-notification.py` は WSL2 上の特殊用途なので、他環境で使う場合は無効化するか各自書き換える想定。
 
 ## skill 一覧
 
@@ -120,7 +116,7 @@ done
 | `documentation-standards` | docs/ 配下のディレクトリ構造・命名規則・顧客向け/開発者向けの書き分けと PDF 生成手順 |
 | `create-manual` | feature PR とセットで現場向け操作マニュアルを作成。物理名 → 業務語の置換ルール / レビュー観点チェックリスト / スクショ撮影手順 / マニュアル雛形を内包 |
 | `issue` | Issue 番号指定で「main 取得 → 設計書ゲート → 実装 → テスト → PR → レビュー → マニュアル → ブラウザテスト」を一括実行（手順自体はフレームワーク非依存。テスト/PR 等の具体例として Laravel + Sail 等を併記） |
-| `parallel-setup` | 並走 clone（worktree でない独立 clone を 4〜7 本）を立てる pattern と手順。役割（feature/hotfix/PoC/refactor 等）別の分担、COMPOSE_PROJECT_NAME / ポート / .mcp.json の isolation、`parallel-notification.py` hook の wiring、共有 DB の扱い、運用 Tips |
+| `parallel-setup` | 並走 clone（worktree でない独立 clone を 4〜7 本）を立てる pattern と手順。役割（feature/hotfix/PoC/refactor 等）別の分担、COMPOSE_PROJECT_NAME / ポート / .mcp.json の isolation、通知（tmux ペインボーダー / 通知音）の wiring、共有 DB の扱い、運用 Tips |
 | `review-permissions` | 蓄積された許可要求ログ（`permission-request-logger.py` が記録）をクラスタ単位で対話レビューし、allowlist 追加 / skill 化 / hook 化 / スクリプト化 / 都度確認継続 を判断 |
 | `add-hook` | 新しい hook を本リポに追加し `settings.json` への配線・検証・テストまでを型化。「settings 参照 hook がファイル欠落で全 tool を block する」致命事故を防ぐ |
 | `review-pr` | 指定 PR をセルフレビュー。Reviewer A/B + Fact-checker の 3 エージェント並列構成（worktree 分離）。自分が author の PR は最大 5 巡で auto-fix モード、collaborator の PR は自動的に review-only モードで GitHub に summary review コメントを投稿（`--review-only` / `--fix` で明示 override 可）|
