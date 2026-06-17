@@ -14,3 +14,7 @@
 
 # Claude Code のプロジェクト固有 local 設定（個人 path や allowlist が入るので追跡しない）
 **/.claude/settings.local.json
+
+# Python build artifacts
+__pycache__/
+*.pyc

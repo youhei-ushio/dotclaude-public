@@ -16,7 +16,8 @@
 |---|---|---|
 | `CLAUDE.md` | `~/.claude/CLAUDE.md` | global ルール（言語・コード discovery 方針 等） |
 | `settings.json` | `~/.claude/settings.json` | env / permissions / hooks のサンプル設定 |
-| `statusline.sh` | `~/.claude/statusline.sh` | 最大 4 行構成のカスタム statusline（pending review / awaiting 行を含む） |
+| `statusline.sh` | `~/.claude/statusline.sh` | 最大 3 行構成のカスタム statusline（pending review 行を含む） |
+| `tmux-grid.sh` | （リポ直下で実行） | 3×2 の tmux グリッドを作り各ペインで並走 Claude Code を起動するランチャ。ペインボーダーで応答待ち / 完了を表示する（`tmux-pane-awaiting.sh` と対） |
 | `hooks/` | `~/.claude/hooks/` | PreToolUse / PostToolUse / PermissionRequest / UserPromptSubmit / SessionStart / Notification / Stop の hook スクリプト |
 | `skills/global/` | `~/.claude/skills/` | プロジェクト非依存の global skill |
 
@@ -92,7 +93,7 @@ done
 | `sql-schema-record.py` | PostToolUse / Bash | スキーマ照会クエリを検出してセッション内 state に記録（上の check と対） | 同上 |
 | `parallel-notification.py` | Notification / Stop | 並走 clone（`*-parallel-N`）環境向け WPF ポップアップ通知 + Windows Terminal タブ focus | **WSL2 + Windows Terminal + powershell.exe 前提** |
 | `permission-request-logger.py` | PermissionRequest | 許可ダイアログの内容を `~/.claude/logs/permission-requests.jsonl` に JSONL 記録（`/review-permissions` skill でまとめてレビューする用）。秘密値を含みうるため 0o600 で書き込み | 汎用（`/review-permissions` skill と対） |
-| `awaiting-parallel.py` | PermissionRequest / UserPromptSubmit / PostToolUse / SessionStart | 並走 clone（`<project>-parallel-N`）で「どの parallel が応答待ちか」を `~/.claude/state/awaiting.tsv` に記録し statusline 4 行目に表示 | 並走 clone 運用向け（単一セッションでは parallel 0 で空振り） |
+| `tmux-pane-awaiting.sh` | PermissionRequest / PostToolUse / Stop / UserPromptSubmit / SessionStart | 並走 clone（`<project>-parallel-N`）を `tmux-grid.sh` の 3×2 グリッドで動かす際、各ペインの**ボーダー色**で状態を示す（応答待ち=赤 / 完了=緑 / 作業中=無印）。発火ペインの tmux pane オプション（`@pstate` / `@didwork` / `@await_sig` / `@notif_turn`）を切り替え、表示書式は `tmux-grid.sh` の `pane-border-format` が定義。応答待ち赤は「許可を出した当の tool の完了」で厳密に解除し、サブエージェント実行中・サブ完了通知ターンは緑にしない | tmux + `tmux-grid.sh` 利用時のみ（tmux 外では no-op で素通り） |
 | `run-drawio-export.sh` | （手動 / skill から） | drawio → SVG 変換ラッパー（Xvfb + drawio） | drawio CLI が必要 |
 
 `parallel-notification.py` は WSL2 上の特殊用途なので、他環境で使う場合は無効化するか各自書き換える想定。
@@ -148,12 +149,13 @@ hook 側も同様に、Laravel Sail 専用の `sail-env-inline-block.py` や SQL
 
 ## statusline
 
-`statusline.sh` は最大 4 行構成（3・4 行目は該当が無ければ非表示）:
+`statusline.sh` は最大 3 行構成（3 行目は該当が無ければ非表示）:
 
 - **1 行目**: セッション名 / Git ブランチ / カレントディレクトリ
 - **2 行目**: モデル名 / コンテキスト使用率バー（70% で黄・90% で赤）/ セッションコスト / レートリミット
 - **3 行目**: 未レビュー許可要求の件数（`permission-request-logger.py` が記録したログの行数。`/review-permissions` で棚卸し）
-- **4 行目**: 応答待ち parallel 一覧（`awaiting-parallel.py` が記録した `awaiting.tsv` を集約。`P1, P3` 形式）
+
+応答待ち（awaiting）の表示は statusline には出さず、tmux ペインボーダー（`tmux-pane-awaiting.sh` + `tmux-grid.sh`）で各ペインに出す。6 グリッド運用では statusline がペイン最下部に出て対象が分かりにくいため、ボーダー側に集約した。
 
 依存: `jq`、`git`。
 

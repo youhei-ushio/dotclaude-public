@@ -82,7 +82,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+            "command": "sh ~/.claude/hooks/tmux-pane-awaiting.sh"
           }
         ]
       }
@@ -105,6 +105,10 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/parallel-notification.py"
+          },
+          {
+            "type": "command",
+            "command": "sh ~/.claude/hooks/tmux-pane-awaiting.sh"
           }
         ]
       }
@@ -119,7 +123,7 @@
           },
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+            "command": "sh ~/.claude/hooks/tmux-pane-awaiting.sh"
           }
         ]
       }
@@ -130,7 +134,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+            "command": "sh ~/.claude/hooks/tmux-pane-awaiting.sh"
           }
         ]
       }
@@ -141,7 +145,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+            "command": "sh ~/.claude/hooks/tmux-pane-awaiting.sh"
           }
         ]
       }

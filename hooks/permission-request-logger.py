@@ -74,7 +74,7 @@ PARALLEL_RE = re.compile(r"-parallel-(\d+)")
 # AskUserQuestion / ExitPlanMode は「awaiting 化シグナル」として
 # 意図的に PermissionRequest を fire させる用途であり、許可要求としてレビュー
 # 対象にする意義は無い (= /review-permissions skill のノイズになる)。
-# 本体 JSONL のみ filter し、debug log と awaiting-parallel.py への
+# 本体 JSONL のみ filter し、debug log と tmux-pane-awaiting.sh への
 # PermissionRequest 伝達は影響を受けない (schema 観測の継続性 + awaiting 化の
 # 維持)。
 INTERNAL_TOOLS_SKIP_LOGGING = frozenset({"AskUserQuestion", "ExitPlanMode"})
@@ -267,7 +267,7 @@ def append_log(payload: dict) -> None:
     (AskUserQuestion / ExitPlanMode 等) は本体 JSONL から除外する。これらは
     awaiting 化シグナルとして意図的に PermissionRequest を fire させる用途で、
     許可要求としてレビュー対象にする意義が無いため。
-    debug log (`_debug_dump`) と awaiting-parallel.py への伝達は本 filter の
+    debug log (`_debug_dump`) と tmux-pane-awaiting.sh への伝達は本 filter の
     対象外で従来通り動作する。`_debug_dump` は main() で本関数より前に呼ばれる
     (本関数の filter は debug 出力後にのみ作用する) ため、Phase A の schema
     観測継続性は壊れない。
