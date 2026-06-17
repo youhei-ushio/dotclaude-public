@@ -39,6 +39,15 @@ case "$PARALLELS" in
   *) echo "PARALLELS は 1〜6 の整数で指定してください (現在: '$PARALLELS')" >&2; exit 1 ;;
 esac
 
+# NAME_PREFIX / DIR_PREFIX は send-keys でペインのシェルにそのまま送出されるため、
+# 空白・特殊文字が混入するとコマンドインジェクション相当になる。英数字・ハイフン・
+# アンダースコアのみ許可する (注意コメントだけに頼らず機械的に弾く)。
+case "$NAME_PREFIX$DIR_PREFIX" in
+  *[!A-Za-z0-9_-]*)
+    echo "NAME_PREFIX / DIR_PREFIX は英数字・ハイフン・アンダースコアのみ可 (現在: '$NAME_PREFIX' / '$DIR_PREFIX')" >&2
+    exit 1 ;;
+esac
+
 wt()    { printf '%s/%s-%s' "$BASE" "$DIR_PREFIX" "$1"; }
 cname() { printf '%s-%s' "$NAME_PREFIX" "$1"; }
 
@@ -103,6 +112,8 @@ for p in "${panes[@]}"; do
     tmux set -p -t "$p" @pnum "$i"
     tmux set -p -t "$p" @pstate ""
     tmux set -p -t "$p" @didwork 0
+    tmux set -p -t "$p" @await_sig ""
+    tmux set -p -t "$p" @notif_turn 0
     tmux send-keys -t "$p" "claude --name $(cname "$i")" C-m
   fi
   i=$((i + 1))

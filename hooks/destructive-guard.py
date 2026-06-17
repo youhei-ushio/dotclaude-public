@@ -5,8 +5,8 @@ destructive-guard.py
 Claude Code PreToolUse (matcher: Bash) hook。
 
 allowlist を read-only 探索動詞 (grep/find/cat/ls/...) や git/gh へ広く広げた
-運用に伴い、**broad allow で自動承認されうる「git でも復旧できない / 高被害」な
-コマンド形だけ** を block する二重防御。
+ことに伴い、**broad allow で自動承認
+されうる「git でも復旧できない / 高被害」なコマンド形だけ** を block する二重防御。
 allow は friction を無くし、危険形はこの hook が止める、という役割分担
 (serena-enforcer が「コード探索 → serena 誘導」を担うのと同じ二重防御パターン)。
 
@@ -23,9 +23,10 @@ block 対象 (いずれも exit 2 で拒否):
   / `git restore <path>` (--staged のみは除く) : 未コミット変更の破棄
   (reflog/remote に残らず復旧不可。通常のブランチ切替は許可)
 - `git ... stash clear`                      : 全 stash 削除 (復旧困難)
-- overwrite redirect (`>` `&>` `N>`、ただし `>>` 追記は除く) や `tee` で
+- overwrite redirect (`>` `&>` `N>`、ただし `>>` 追記は除く) や `tee`、または `rm` で
   `~/.claude/**` `~/.ssh/**` および `/etc /usr /bin /sbin /boot /sys /lib` を
-  上書きするもの : 稼働中ライブ設定 / 鍵 / システムファイルの破壊
+  破壊するもの : 稼働中ライブ設定 / 鍵 / システムファイルの破壊
+  (素の `rm -rf ~/.claude` も含む。redirect/tee だけでなく rm 直撃も止める)
 
 block しない (= 通す):
 - `>>` 追記、`> /tmp/...` / `> /var/tmp/...` / `> /dev/null`、相対パスやリポ配下への上書き
@@ -36,7 +37,17 @@ block しない (= 通す):
 allowlist 外の mutator (`cp` / `mv` / `dd` / `truncate` 等) は本 hook では個別検知せず、
 **allowlist に無い = 都度確認** に委ねる。`tee` のみ redirect 相当として検知。
 
-bypass: コマンド末尾に `# via:destructive-ok: <理由>` (理由必須)。
+**静的判定の原理的限界 (block しない = 検知不能。防御範囲の誤認を防ぐため明記)**:
+- 変数展開・コマンド置換・eval 経由で組み立てる動的コマンド (`F=--force; git push $F` /
+  `rm $(find . -name x)` / `eval "..."`)
+- プロセス置換 (`tee >(...)`) や相対パス依存 (`cd ~/.claude && rm settings.json`) で
+  cwd に依存して保護対象に到達するもの
+- `cp` / `mv` / `dd of=` / `truncate` 等での保護対象上書き (allowlist 外 = 都度確認に委ねる)
+これらは静的 regex では原理的に検知できない。allow された道具で意図的回避が可能な点は
+broad-allow 運用の前提 (コマンドは Claude 自身が組み、敵対的回避は想定外) で許容する。
+
+bypass: コマンド末尾の **本物のシェルコメント** `# via:destructive-ok: <理由>` (理由必須)。
+クォート内データに同テキストを紛れ込ませても bypass にはならない (クォート除去後に判定)。
 
 例外は飲み込み、hook 失敗で Claude Code を止めない (exit 0)。
 """
@@ -61,11 +72,14 @@ def _protected_home_dirs() -> tuple[str, ...]:
 
 
 def _is_protected_target(raw_target: str) -> bool:
-    """リダイレクト / tee の宛先文字列が保護対象なら True。
-    前後のクォートを除去し、~ / $HOME / ${HOME} を展開してから判定する。
+    """リダイレクト / tee / rm の宛先文字列が保護対象なら True。
+    クォートを (外側だけでなく内部も) 除去し、~ / $HOME / ${HOME} を展開してから判定する。
     末尾スラッシュ無し (ディレクトリ実体や symlink ファイル) も保護対象に含める。
     """
-    target = raw_target.strip().strip("'\"")
+    # 内部クォートも除去する: `"$HOME"/.claude` のように $HOME 部分だけをクォートする
+    # 記法でも展開・判定できるようにするため (外側 strip だけだと `$HOME"/...` が残り
+    # `startswith("$HOME/")` が外れる)。パスに literal な引用符が含まれることはまず無い。
+    target = raw_target.strip().replace('"', "").replace("'", "")
     if not target:
         return False
     home = os.path.expanduser("~")
@@ -130,8 +144,17 @@ def _split_segments(cmd: str) -> list[str]:
 # 「push/clean が subcommand でない」ケースを force 判定から除外する
 # (false positive 対策)。`git -C <repo> push` のような前置形は引き続き検知。
 def _git_subcommand(seg: str, sub: str):
+    # クォート区間を **単一の非空白プレースホルダ** に潰してから判定する。空白に
+    # 置換すると `git -C "/my repo" push` が `git -C   push` となり `-[Cc]\s+\S+` の値が
+    # 直後の subcommand (`push`) を食って取りこぼす。非空白 1 字に潰せば値は 1 トークンに
+    # 収まり、`git -C X push` → `-C X` + `\s+push` で正しく検知できる
+    # (`git -c core.pager="less -R" push --force` も `-c core.pager=X push` で検知)。
+    seg = re.sub(r"'[^']*'|\"[^\"]*\"", "Q", seg)
+    # オプション列は atomic group (?>...) で確定消費し、末尾 subcommand が一致しない
+    # 入力 (`git --foo=bar ...(多数) commit` 等) での壊滅的バックトラッキング (ReDoS) を
+    # 防ぐ。値は \S+ 単発に固定 (繰り返しのネストを作らない)。
     return re.search(
-        r"\bgit\b(?:\s+(?:-[Cc]\s+\S+|--?[\w-]+(?:=\S+)?))*\s+" + sub + r"\b",
+        r"\bgit\b(?>(?:\s+(?:-[Cc]\s+\S+|--?[\w-]+(?:=\S+)?))*)\s+" + sub + r"\b",
         seg,
     )
 
@@ -222,6 +245,50 @@ def _is_stash_clear(seg: str) -> bool:
     )
 
 
+def _is_protected_rm(seg: str) -> bool:
+    r"""segment が保護対象 (~/.claude ~/.ssh /etc 等) を対象にした `rm` か。
+    `rm` は broad-allow だが、保護対象への rm は redirect/tee と同じく止める
+    (素の `rm -rf ~/.claude` が hook の謳う「ライブ設定/鍵の保護」を貫通する
+    false-negative を塞ぐ)。`_is_protected_target` が /tmp 等を除外するので、
+    通常の `rm /tmp/x` や `rm docs/temp/x` は false-positive にならない。
+    誤 block を避けるため: `rm` が segment の **動詞位置** (先頭、前置として `VAR=val` 代入と
+    単純 wrapper (`sudo`/`command`/`env`/`time`/`nice`/`exec`/`builtin`/`doas`) を読み飛ばした
+    位置、先頭 `\`、絶対パス `/bin/rm`) のときだけ対象にし、`git commit -m 'rm ~/.claude'` や
+    `echo rm ~/.claude`・`sudo grep -r rm /etc` のようにデータ/引数/別コマンドとして現れる
+    `rm` を誤検知しない。各引数は `_is_protected_target` (クォート除去+展開) で判定。
+    **静的限界 (対象外)**: `sudo -u root rm` / `nice -n 10 rm` のように wrapper が
+    **オプションを伴う**形は静的に安全判定できない (`-u root` の `root` がオプション引数か
+    コマンドか判別不能。lazy 化すると `sudo grep rm /etc` 等を誤 block する) ため対象外。
+    第一層の許可プロンプトが `sudo`/`rm` を別途止める前提で許容する。
+    処理順: (1) クォート区間を同長プレースホルダで潰す (offset 保存)。(2) その潰した文字列上で
+    行頭/空白直後の `#` 以降を末尾コメントとして除去 (元文字列も同 offset で切る)。クォートを
+    先に無害化することで `rm 'a#b' ~/.claude` のようにクォート内 `#` で rm/パスが消える ordering
+    バグを防ぐ。(3) 潰した文字列で rm 動詞位置を判定し、引数は**元の文字列**から走査する
+    (`"$HOME"/.ssh` 等の部分クォート保護パスの検知を維持)。"""
+    # (1) クォート区間を同長プレースホルダで潰す (offset 保存)
+    blanked = re.sub(r"'[^']*'|\"[^\"]*\"", lambda mo: "Q" * len(mo.group(0)), seg)
+    # (2) 行頭/空白直後の `#` 以降を末尾コメントとして除去 (blanked 上で位置特定、元 seg も同 offset で切る)
+    mc = re.search(r"(?:^|\s)#", blanked)
+    end = mc.start() if mc else len(seg)
+    blanked, s = blanked[:end], seg[:end]
+    # (3) 動詞位置の rm。単純 wrapper / VAR=val / 先頭 `\` / 絶対パスを読み飛ばす
+    #     (オプション付き wrapper は上記「静的限界」のとおり対象外)。
+    m = re.match(
+        r"\s*(?:(?:[A-Za-z_]\w*=\S*|sudo|command|env|time|nice|exec|builtin|doas)\s+)*"
+        r"\\?(?:/\S*/)?rm\b",
+        blanked,
+    )
+    if not m:
+        return False
+    # 引数は元 s から (offset は同長 blanked と一致)。クォート付き保護パスを保持。
+    for a in s[m.end():].split():
+        if a.startswith("-"):
+            continue
+        if _is_protected_target(a):
+            return True
+    return False
+
+
 def _danger_reason(cmd: str) -> str | None:
     # find ... -delete
     if re.search(r"\bfind\b[^|;&]*\s-delete\b", cmd):
@@ -244,6 +311,8 @@ def _danger_reason(cmd: str) -> str | None:
             return "`git stash clear` は全 stash 削除で復旧困難"
         if _is_worktree_discard(seg):
             return "`git checkout -f`/`restore <path>`/`checkout -- ` 等は未コミット変更を破棄 (reflog/remote に残らない)"
+        if _is_protected_rm(seg):
+            return "保護対象 (~/.claude ~/.ssh /etc 等) への `rm` はライブ設定/鍵/システムを破壊しうる"
     # overwrite redirect / tee で保護対象を上書き
     r = _check_overwrite_targets(cmd)
     if r is not None:
@@ -270,8 +339,14 @@ def main() -> int:
         if reason is None:
             return 0
 
-        # bypass: `# via:destructive-ok: <非空の理由>`
-        if re.search(r"#\s*via:destructive-ok\s*:\s*\S+", cmd):
+        # bypass: コマンド末尾の **本物のシェルコメント** `# via:destructive-ok: <非空の理由>`。
+        # クォート文字列を先に除去してから探すことで、`echo '# via:destructive-ok: x' >
+        # ~/.claude/...` のように **クォート内データに紛れ込ませた擬似コメント** での bypass を
+        # 防ぐ。`#` は行頭または空白直後 (= 実際にコメントが始まる位置) のみ有効。
+        # 二重引用符内は \" エスケープも 1 区間として食う (`"a\""` 等で残りが露出して
+        # bypass が誤成立するのを防ぐ)。bypass 理由にクォート文字は含めないこと。
+        stripped = re.sub(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"", "", cmd)
+        if re.search(r"(?:^|\s)#\s*via:destructive-ok\s*:\s*\S", stripped):
             return 0
 
         print(

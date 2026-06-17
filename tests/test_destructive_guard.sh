@@ -7,7 +7,8 @@
 # ファイルには触れない) なので HOME 隔離は不要。リポ実体の hook を直接叩く。
 # exit 2 = block / exit 0 = allow を検証する。
 #
-# 各テストは `&&` 連結 (bash -e が if 配下で効かない POSIX 仕様への対策)。
+# 各テストは `&&` 連結 (bash -e が if 配下で効かない POSIX 仕様への対策。
+# test_awaiting_parallel.sh と同じ規約)。
 
 HOOK="$(cd "$(dirname "$0")/.." && pwd)/hooks/destructive-guard.py"
 FAIL=0
@@ -32,6 +33,18 @@ _rc() {
 
 blocked() { [ "$(_rc "$1")" = "2" ]; }
 allowed() { [ "$(_rc "$1")" = "0" ]; }
+
+# ReDoS 回帰: 時間内 (5s) に判定が終われば OK (timeout=124/137 は NG)。
+# 長い `--k=v` 反復で壊滅的バックトラッキングしないことを保証する。
+redos_ok() {
+    local cmd="$1" rc
+    timeout 5 sh -c '
+        python3 -c "import json,sys; print(json.dumps({\"tool_name\":\"Bash\",\"tool_input\":{\"command\":sys.argv[1]}}))" "$1" \
+            | python3 "$2"
+    ' _ "$cmd" "$HOOK" >/dev/null 2>&1
+    rc=$?
+    [ "$rc" != "124" ] && [ "$rc" != "137" ]
+}
 
 # ---------- block されるべき (exit 2) ----------
 run "B1: find -delete を block"            blocked "find . -name '*.log' -delete"
@@ -128,6 +141,78 @@ run "BY1: # via:destructive-ok: 理由付きは allow" \
     allowed "find . -delete # via:destructive-ok: clean test artifacts"
 run "BY2: bypass の理由が空なら block 維持" \
     blocked "find . -delete # via:destructive-ok:"
+
+# ---------- レビュー指摘の回帰 (保護パス rm / クォート git option / bypass 厳密化) ----------
+# SF2: 素の rm で保護対象を破壊するのを block (find/xargs/redirect だけでなく rm 直撃も)
+run "B35: rm -rf ~/.claude を block"             blocked "rm -rf ~/.claude"
+run "B36: rm -rf \"\$HOME\"/.ssh を block"        blocked 'rm -rf "$HOME"/.ssh'
+run "B37: rm -rf /etc/foo を block"              blocked "rm -rf /etc/foo"
+run "B38: rm ~/.claude/settings.json (単一) を block" blocked "rm ~/.claude/settings.json"
+# SF2 の false-positive 不在: 保護対象でない rm は通す
+run "A32: rm -rf /tmp/x は allow"                allowed "rm -rf /tmp/x"
+run "A33: rm docs/temp/x.md (相対) は allow"      allowed "rm docs/temp/x.md"
+run "A34: rm -rf node_modules は allow"          allowed "rm -rf node_modules"
+# SF1: クォート内に空白を含むグローバルオプション値があっても force push を block
+run "B39: git -c core.pager=\"less -R\" push --force を block" \
+    blocked 'git -c core.pager="less -R" push --force origin main'
+# SF3: \$HOME 部分だけクォートする記法でも保護対象と判定して block
+run "B40: echo > \"\$HOME\"/.claude/... (部分クォート) を block" \
+    blocked 'echo x > "$HOME"/.claude/settings.json'
+# NTH1: クォート内データに紛れ込ませた擬似コメントでは bypass しない (なお block)
+run "B41: クォート内データの擬似 bypass は無効 (block 維持)" \
+    blocked "echo '# via:destructive-ok: x' > ~/.claude/settings.json"
+# NTH1: 末尾の本物のコメント bypass は有効 (保護パス rm を allow)
+run "BY3: 保護パス rm + 末尾 bypass は allow" \
+    allowed "rm -rf ~/.claude # via:destructive-ok: 意図的なクリア"
+
+# ---------- セルフレビュー指摘の回帰 (ReDoS / rm 誤 block) ----------
+# A-R1: 長い --k=v 反復の git (非 push) で ReDoS せず時間内に判定が終わる
+# (反復数を多め=200 にして準線形劣化も検知しやすくする)
+run "RD1: 長い --k=v 反復 git (非 push) が ReDoS しない" \
+    redos_ok "$(python3 -c 'print("git " + "--foo=bar "*200 + "commit -m x")')"
+# 2 巡目 R-1: -c/-C の引数全体をクォートした force push を取りこぼさない
+run "B43: git -C \"/my repo\" push --force (空白パス) を block" \
+    blocked 'git -C "/my repo" push --force'
+run "B44: git -c \"alias.x=push --force\" push --force を block" \
+    blocked 'git -c "alias.x=push --force" push --force'
+# 2 巡目 R-2/R-1: 前置コマンド付き rm を取りこぼさない
+run "B45: sudo rm -rf /etc/foo を block"          blocked "sudo rm -rf /etc/foo"
+run "B46: command rm -rf ~/.claude を block"      blocked "command rm -rf ~/.claude"
+run "B47: /bin/rm -rf ~/.ssh (絶対パス) を block" blocked "/bin/rm -rf ~/.ssh"
+run "B48: \\rm -rf ~/.claude (バックスラッシュ) を block" blocked '\rm -rf ~/.claude'
+run "B49: time rm -rf ~/.claude を block"         blocked "time rm -rf ~/.claude"
+run "B50: env FOO=bar rm -rf ~/.claude を block"  blocked "env FOO=bar rm -rf ~/.claude"
+# 前置形でも保護対象でなければ allow (false-positive 不在の対称確認)
+run "A38: sudo rm -rf /tmp/x は allow"            allowed "sudo rm -rf /tmp/x"
+
+# ---------- 単純 wrapper 前置の保護パス rm は block (オプション無し形) ----------
+# (B45-B50 で sudo rm / command rm / /bin/rm / \rm / time rm / env FOO=bar rm を既に確認)
+# wrapper が非 rm コマンドを実行 / クォート内 rm は誤 block しない (false-positive 不在)
+run "A39: sudo git commit -m 'rm ~/.claude' (クォート内 rm) は allow" \
+    allowed "sudo git commit -m 'remember to rm ~/.claude later'"
+run "A40: sudo apt install foo (rm 無し) は allow"  allowed "sudo apt install foo"
+run "A41: sudo grep -r rm /etc (非 rm コマンド) は allow" allowed "sudo grep -r rm /etc"
+run "A42: sudo cat rm ~/.ssh/id_rsa (非 rm コマンド) は allow" allowed "sudo cat rm ~/.ssh/id_rsa"
+# 順序修正の回帰: クォート内 `#` を含む引数があっても rm/保護パスが消えず block (B の ordering バグ)
+run "B51: rm 'foo#bar' ~/.claude (クォート内# + 保護パス) を block" \
+    blocked "rm 'foo#bar' ~/.claude"
+# 静的限界 (現状 allow を pin): wrapper のオプション付き形は対象外。検知拡張/縮小を意図的に
+run "L1: [静的限界] sudo -u root rm -rf ~/.claude は現状 allow" \
+    allowed "sudo -u root rm -rf ~/.claude"
+run "L2: [静的限界] nice -n 10 rm -rf /etc/foo は現状 allow" \
+    allowed "nice -n 10 rm -rf /etc/foo"
+# wrapper 前置の長い非 rm コマンドで ReDoS しない
+run "RD2: sudo + 長い非 rm 引数で ReDoS しない" \
+    redos_ok "$(python3 -c 'print("sudo " + "arg "*300 + "echo done")')"
+# A-R2/B-R1/B-R2: rm が動詞位置でない / コメント内の保護パス言及は誤 block しない
+run "A35: git commit -m 'rm ~/.claude/..' (クォート内) は allow" \
+    allowed "git commit -m 'remember to rm ~/.claude/old later'"
+run "A36: echo rm ~/.claude (rm が引数) は allow" allowed "echo rm ~/.claude"
+run "A37: rm foo.txt # ~/.claude のバックアップ (コメント) は allow" \
+    allowed "rm foo.txt # backup of ~/.claude"
+# 動詞位置の保護パス rm は引き続き block (回帰の対称確認)
+run "B42: && の後の rm ~/.claude (動詞位置) は block 維持" \
+    blocked "echo start && rm -rf ~/.claude"
 
 # ---------- 非 Bash tool は対象外 (allow) ----------
 non_bash_allowed() {
