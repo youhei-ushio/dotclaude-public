@@ -30,7 +30,8 @@
       "Skill(documentation-standards)",
       "Skill(parallel-setup)",
       "Skill(review-pr)",
-      "Skill(handoff)"
+      "Skill(handoff)",
+      "Skill(systematic-debugging)"
     ],
     "defaultMode": "acceptEdits"
   },
