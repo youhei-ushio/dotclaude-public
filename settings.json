@@ -31,6 +31,7 @@
       "Skill(parallel-setup)",
       "Skill(review-pr)",
       "Skill(handoff)",
+      "Skill(add-hook)",
       "Skill(systematic-debugging)"
     ],
     "defaultMode": "acceptEdits"
@@ -55,6 +56,10 @@
           {
             "type": "command",
             "command": "python3 ~/.claude/hooks/sail-env-inline-block.py"
+          },
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/destructive-guard.py"
           }
         ]
       },
@@ -83,7 +88,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+            "command": "sh ~/.claude/hooks/tmux-pane-awaiting.sh"
           }
         ]
       }
@@ -94,7 +99,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/parallel-notification.py"
+            "command": "sh ~/.claude/hooks/notify-sound.sh"
           }
         ]
       }
@@ -105,7 +110,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/parallel-notification.py"
+            "command": "sh ~/.claude/hooks/tmux-pane-awaiting.sh"
+          },
+          {
+            "type": "command",
+            "command": "sh ~/.claude/hooks/notify-sound.sh"
           }
         ]
       }
@@ -120,7 +129,11 @@
           },
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+            "command": "sh ~/.claude/hooks/tmux-pane-awaiting.sh"
+          },
+          {
+            "type": "command",
+            "command": "sh ~/.claude/hooks/notify-sound.sh"
           }
         ]
       }
@@ -131,7 +144,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+            "command": "sh ~/.claude/hooks/tmux-pane-awaiting.sh"
           }
         ]
       }
@@ -142,7 +155,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/awaiting-parallel.py"
+            "command": "sh ~/.claude/hooks/tmux-pane-awaiting.sh"
           }
         ]
       }
