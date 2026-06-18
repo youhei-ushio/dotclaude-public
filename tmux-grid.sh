@@ -118,6 +118,9 @@ F=$(tmux split-window -v -t "$C" -c "$(pane_dir 6)" -P -F '#{pane_id}')
 #     input → 赤背景「⏳ PN 待機」 / done → 緑背景「✓ PN 完了」 / それ以外 → 淡色「PN」
 #   書式は #{?cond,then,else} の 3 段ネスト (分岐順 input > done > work、閉じ括弧 3 個)。
 #   各 then 句末の #[default] は必須。#[...] 内のリテラルカンマは #, でエスケープする。
+# ペイン境界線を太線字形 (heavy box-drawing) にして見やすくする (tmux 3.3+)。
+# 実際の太さはフォント依存 (heavy 字形を太く描くフォントで効果が出る)。
+tmux set-option -t "$SESSION" pane-border-lines heavy
 tmux set-option -t "$SESSION" pane-border-status top
 tmux set-option -t "$SESSION" pane-border-format \
   '#{?#{==:#{@pstate},input},#[fg=colour231#,bg=colour196#,bold] ⏳ P#{@pnum} 待機 #[default],#{?#{==:#{@pstate},done},#[fg=colour231#,bg=colour028#,bold] ✓ P#{@pnum} 完了 #[default],#{?@pnum,#[fg=colour244] P#{@pnum} #[default],}}}'
