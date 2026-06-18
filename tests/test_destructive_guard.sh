@@ -214,6 +214,23 @@ run "A37: rm foo.txt # ~/.claude のバックアップ (コメント) は allow"
 run "B42: && の後の rm ~/.claude (動詞位置) は block 維持" \
     blocked "echo start && rm -rf ~/.claude"
 
+# ---------- 公開 PR #11 2 巡目レビュー: home 直下保護 / 冗長スラッシュ / rm 動詞境界 ----------
+# SF (home 自体): ~ / $HOME / ${HOME} / 末尾スラッシュ は .claude/.ssh ごと巻き込むため block
+run "B52: rm -rf ~ (home 直下) を block"          blocked "rm -rf ~"
+run "B53: rm -rf \$HOME を block"                 blocked 'rm -rf $HOME'
+run "B54: rm -rf \${HOME} を block"               blocked 'rm -rf ${HOME}'
+run "B55: rm -rf ~/ (末尾スラッシュ) を block"     blocked "rm -rf ~/"
+# Nice (冗長スラッシュ): // で /etc 検知漏れしない
+run "B56: rm //etc/passwd (冗長スラッシュ) を block" blocked "rm //etc/passwd"
+# home 配下の非保護サブディレクトリは home 自体保護で巻き込まない (false-positive 不在)
+run "A43: rm -rf ~/projects (home 配下の非保護) は allow" allowed "rm -rf ~/projects"
+# Nice (rm 動詞境界): rm.real は rm コマンドでないので誤 block しない
+run "A44: rm.real ~/.claude (rm 動詞でない) は allow" allowed "rm.real ~/.claude"
+# Must-fix の回帰: atomic group を外しても引用符付きグローバルオプションの force push を検知
+# (本体は B39/B43/B44 で確認済み。本ケースは非アトミック化後も維持されることの再確認)
+run "B57: git -c core.pager=\"less -R\" push -f (非アトミック後) を block" \
+    blocked 'git -c core.pager="less -R" push -f origin main'
+
 # ---------- 非 Bash tool は対象外 (allow) ----------
 non_bash_allowed() {
     echo '{"tool_name":"Read","tool_input":{"file_path":"/etc/hosts"}}' \
