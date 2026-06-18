@@ -18,7 +18,7 @@ description: |
 | 操作マニュアル（顧客向け） | `docs/business/manuals/{機能名}.md` |
 | 業務フロー（顧客向け） | `docs/business/workflows/{内容}.md` |
 | トレーニング資料 | `docs/business/training/{内容}.md` |
-| アーキテクチャ決定記録 (ADR) | `docs/adr/{4桁連番}-{タイトル}.md` |
+| アーキテクチャ決定記録 (ADR) | `docs/adr/{4桁連番}-{kebab-case-title}.md` |
 | リリースノート | `docs/release-notes/{ISO日付}.md` |
 | 運用・デプロイ・トラブルシュート | `docs/operations/{内容}.md` |
 | 開発者向けガイド | `docs/development/{内容}.md` |
@@ -130,13 +130,10 @@ description: |
 
 選択した選択肢: **選択肢名**、採用理由を記載。
 
-### メリット
+### 結果（Consequences）
 
-- メリットを記載
-
-### デメリット
-
-- デメリットを記載
+- 良い結果: 採用により得られる利点・解消される課題
+- 悪い結果: 採用に伴うコスト・新たに生じる制約やリスク
 
 ## 選択肢の評価（Pros and Cons）
 
