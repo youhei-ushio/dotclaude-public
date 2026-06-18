@@ -78,4 +78,4 @@ Context / Decision / Consequences の 3 節からなる最小様式。
 ## 関連リンク
 
 - Related: [MADR (adr/madr)](https://github.com/adr/madr)
-- Related: documentation-standards スキルの「## ADR（Architecture Decision Record）」セクション
+- Related: [documentation-standards スキルの「ADR」セクション](../../skills/global/documentation-standards/SKILL.md)
