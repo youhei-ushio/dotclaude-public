@@ -18,7 +18,7 @@ description: |
 | 操作マニュアル（顧客向け） | `docs/business/manuals/{機能名}.md` |
 | 業務フロー（顧客向け） | `docs/business/workflows/{内容}.md` |
 | トレーニング資料 | `docs/business/training/{内容}.md` |
-| アーキテクチャ決定記録 (ADR) | `docs/adr/{4桁連番}-{タイトル}.md` |
+| アーキテクチャ決定記録 (ADR) | `docs/adr/{4桁連番}-{kebab-case-title}.md` |
 | リリースノート | `docs/release-notes/{ISO日付}.md` |
 | 運用・デプロイ・トラブルシュート | `docs/operations/{内容}.md` |
 | 開発者向けガイド | `docs/development/{内容}.md` |
@@ -68,9 +68,10 @@ description: |
 
 ### ADR 専用ルール
 
-- ファイル名: `{4桁連番}-{kebab-case-title}.md`
+- ファイル名: `{4桁連番}-{kebab-case-title}.md`（ファイル名は英語 kebab-case で統一。本文タイトル・内容はプロジェクトの言語で書いてよい）
 - 例: `0001-adopt-feature-flags.md`, `0042-introduce-event-sourcing.md`
 - 連番は `docs/adr/` 内の最大値+1（既存を確認してから採番）
+- 配置先・フォーマット・ステータス値・作成手順は「## ADR（Architecture Decision Record）」を参照
 
 ### リリースノート専用ルール
 
@@ -84,6 +85,95 @@ description: |
 - `untitled.md`, `memo.md`（内容を表さない）
 - `snake_case.md`（例: `api_specification.md`）
 - 末尾に日付のみ（`spec_20260508.md`）
+
+## ADR（Architecture Decision Record）
+
+設計上の意思決定を MADR 形式で記録する。ファイル名・採番は「命名規則 → ADR 専用ルール」に従う。
+
+### 配置先
+
+- 複数リポジトリに跨る共通ポリシー → 共通ポリシー用の中央リポジトリの `docs/adr/`
+- 特定リポジトリのみに適用 → そのリポジトリの `docs/adr/`
+
+### ステータスの値
+
+| 値 | 意味 |
+|---|---|
+| `Proposed` | 提案中・議論中 |
+| `Accepted` | 承認済み・適用中 |
+| `Deprecated` | 非推奨（理由を「## 決定内容」に明記） |
+| `Superseded by {4桁連番}-{kebab-case-title}` | 別の ADR に置き換えられた |
+
+### テンプレート
+
+```markdown
+# [タイトル]
+
+## ステータス
+
+[Proposed | Accepted | Deprecated | Superseded by {4桁連番}-{kebab-case-title}] — YYYY-MM-DD
+
+## 背景と課題
+
+問題の背景と、解決すべき問いを記載する。
+
+## 意思決定の要因
+
+- 意思決定に影響する制約・要件
+
+## 検討した選択肢
+
+- 選択肢1
+- 選択肢2
+
+## 決定内容
+
+選択した選択肢: **選択肢名**、採用理由を記載。
+
+### 結果（Consequences）
+
+- 良い結果: 採用により得られる利点・解消される課題
+- 悪い結果: 採用に伴うコスト・新たに生じる制約やリスク
+
+## 選択肢の評価（Pros and Cons）
+
+### 選択肢1
+
+選択肢の概要説明。
+
+#### メリット
+
+- ...
+
+#### デメリット
+
+- ...
+
+### 選択肢2
+
+選択肢の概要説明。
+
+#### メリット
+
+- ...
+
+#### デメリット
+
+- ...
+
+## 関連リンク
+
+- Extends: [{4桁連番}-{kebab-case-title}](リンク)
+- Supersedes: [{4桁連番}-{kebab-case-title}](リンク)
+- Related: [チケット等](リンク)
+```
+
+### 作成手順
+
+1. `docs/adr/` 内の既存 ADR を確認して次の連番を決定する（命名規則を参照）
+2. 上記テンプレートでファイルを作成する。ステータス行は表の値から1つ選んで角括弧とパイプを外し、日付は `date +%Y-%m-%d` で確定した値を入れる（学習データの日付に頼らない）。`Superseded by {4桁連番}-{kebab-case-title}` を選んだ場合はプレースホルダを置き換えた ADR の実 ID に置換する
+3. 既存 ADR を置き換える場合は双方向に更新する。新 ADR の「関連リンク」に `Supersedes:` を記載し、**かつ旧 ADR のステータスを `Superseded by {新 ADR の ID}` に更新する**（片側更新漏れを防ぐ）
+4. `docs/adr/README.md` の一覧表に追記する（存在する場合）
 
 ## 内容ルール
 
