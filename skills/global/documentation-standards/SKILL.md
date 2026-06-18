@@ -68,7 +68,7 @@ description: |
 
 ### ADR 専用ルール
 
-- ファイル名: `{4桁連番}-{kebab-case-title}.md`
+- ファイル名: `{4桁連番}-{kebab-case-title}.md`（ファイル名は英語 kebab-case で統一。本文タイトル・内容はプロジェクトの言語で書いてよい）
 - 例: `0001-adopt-feature-flags.md`, `0042-introduce-event-sourcing.md`
 - 連番は `docs/adr/` 内の最大値+1（既存を確認してから採番）
 - 配置先・フォーマット・ステータス値・作成手順は「## ADR（Architecture Decision Record）」を参照
@@ -174,8 +174,9 @@ description: |
 ### 作成手順
 
 1. `docs/adr/` 内の既存 ADR を確認して次の連番を決定する（命名規則を参照）
-2. 上記テンプレートでファイルを作成する。ステータス行は表の値から1つ選んで角括弧とパイプを外し、日付は `date +%Y-%m-%d` で確定した値を入れる（学習データの日付に頼らない）
-3. `docs/adr/README.md` の一覧表に追記する（存在する場合）
+2. 上記テンプレートでファイルを作成する。ステータス行は表の値から1つ選んで角括弧とパイプを外し、日付は `date +%Y-%m-%d` で確定した値を入れる（学習データの日付に頼らない）。`Superseded by {4桁連番}-{kebab-case-title}` を選んだ場合はプレースホルダを置き換えた ADR の実 ID に置換する
+3. 既存 ADR を置き換える場合は双方向に更新する。新 ADR の「関連リンク」に `Supersedes:` を記載し、**かつ旧 ADR のステータスを `Superseded by {新 ADR の ID}` に更新する**（片側更新漏れを防ぐ）
+4. `docs/adr/README.md` の一覧表に追記する（存在する場合）
 
 ## 内容ルール
 
