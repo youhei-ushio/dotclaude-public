@@ -28,15 +28,19 @@ set -euo pipefail
 #   -n / --no-continue   各ペインの claude を -c 無し (新規会話) で起動する。
 #                        既定は -c 付き (cwd 単位で直近会話を継続)。設定/会話を
 #                        リセットして始めたいときに付ける。
-SESSION="parallel"
+SESSION=""
 CONTINUE="-c"                 # 既定: 直近会話を継続 (-c)。--no-continue で空にする
 for arg in "$@"; do
   case "$arg" in
     -n|--no-continue) CONTINUE="" ;;
     -*) echo "不明なオプション: $arg (使えるのは -n / --no-continue)" >&2; exit 1 ;;
-    *)  SESSION="$arg" ;;
+    *)  if [ -n "$SESSION" ]; then
+          echo "位置引数 (セッション名) は 1 個まで (余分な引数: '$arg')" >&2; exit 1
+        fi
+        SESSION="$arg" ;;
   esac
 done
+SESSION="${SESSION:-parallel}"   # 位置引数省略時は "parallel"
 BASE="${BASE:-$HOME/repos}"               # worktree の親ディレクトリ
 DIR_PREFIX="${DIR_PREFIX:-myproject-parallel}"  # worktree ディレクトリ = $BASE/$DIR_PREFIX-N
 NAME_PREFIX="${NAME_PREFIX:-myproject}"   # claude --name = $NAME_PREFIX-N
