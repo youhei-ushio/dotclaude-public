@@ -11,7 +11,8 @@
 #
 #   使い方:
 #     chmod +x tmux-grid.sh
-#     ./tmux-grid.sh [セッション名]      # 省略時は "parallel"
+#     ./tmux-grid.sh [セッション名]                 # 省略時は "parallel"。各ペインは -c 付き (直近会話を継続) で起動
+#     ./tmux-grid.sh [セッション名] --no-continue   # -c 無しで起動 (設定/会話をリセットして新規で始めたいとき)
 #
 #   プロジェクトに合わせて DIR_PREFIX / NAME_PREFIX / BASE / PARALLELS を
 #   環境変数で上書きできる (下記デフォルトはサンプル):
@@ -22,7 +23,20 @@
 set -euo pipefail
 
 # ===== 設定（環境変数で上書き可。デフォルトはサンプル値） =====
-SESSION="${1:-parallel}"
+# 引数 (順不同):
+#   [セッション名]        位置引数。省略時は "parallel"
+#   -n / --no-continue   各ペインの claude を -c 無し (新規会話) で起動する。
+#                        既定は -c 付き (cwd 単位で直近会話を継続)。設定/会話を
+#                        リセットして始めたいときに付ける。
+SESSION="parallel"
+CONTINUE="-c"                 # 既定: 直近会話を継続 (-c)。--no-continue で空にする
+for arg in "$@"; do
+  case "$arg" in
+    -n|--no-continue) CONTINUE="" ;;
+    -*) echo "不明なオプション: $arg (使えるのは -n / --no-continue)" >&2; exit 1 ;;
+    *)  SESSION="$arg" ;;
+  esac
+done
 BASE="${BASE:-$HOME/repos}"               # worktree の親ディレクトリ
 DIR_PREFIX="${DIR_PREFIX:-myproject-parallel}"  # worktree ディレクトリ = $BASE/$DIR_PREFIX-N
 NAME_PREFIX="${NAME_PREFIX:-myproject}"   # claude --name = $NAME_PREFIX-N
@@ -103,7 +117,8 @@ tmux set-option -t "$SESSION" pane-border-format \
   '#{?#{==:#{@pstate},input},#[fg=colour231#,bg=colour196#,bold] ⏳ P#{@pnum} 待機 #[default],#{?#{==:#{@pstate},done},#[fg=colour231#,bg=colour028#,bold] ✓ P#{@pnum} 完了 #[default],#{?@pnum,#[fg=colour244] P#{@pnum} #[default],}}}'
 
 # --- 1..PARALLELS のペインだけ Claude Code 起動。残りは空ターミナルのまま ---
-#   ペインは -c で worktree に cd 済みなので、そのまま claude を起動。
+#   ペインは split-window -c で worktree に cd 済みなので、そのまま claude を起動。
+#   $CONTINUE 既定 "-c": その cwd の直近会話を継続する (--no-continue で空になり新規起動)。
 panes=("$A" "$B" "$C" "$D" "$E" "$F")
 i=1
 for p in "${panes[@]}"; do
@@ -114,7 +129,7 @@ for p in "${panes[@]}"; do
     tmux set -p -t "$p" @didwork 0
     tmux set -p -t "$p" @await_sig ""
     tmux set -p -t "$p" @notif_turn 0
-    tmux send-keys -t "$p" "claude --name $(cname "$i")" C-m
+    tmux send-keys -t "$p" "claude ${CONTINUE:+$CONTINUE }--name $(cname "$i")" C-m
   fi
   i=$((i + 1))
 done
