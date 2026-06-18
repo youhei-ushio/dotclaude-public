@@ -68,6 +68,8 @@ description: |
 - description が起動条件として機能するトリガー文か（単なる説明になっていないか）。
 - 本文の参照先 skill / パスが実在するか（dead link が無いか）。
 - README / settings.json への登録漏れが無いか。
+- 新しい規約・方針の追加（仕様判断）にあたるなら、配布先に ADR 運用があれば
+  `documentation-standards` の ADR 規約に従って ADR を起票する。
 
 ## 注意事項
 
