@@ -32,7 +32,10 @@
       "Skill(review-pr)",
       "Skill(handoff)",
       "Skill(add-hook)",
-      "Skill(systematic-debugging)"
+      "Skill(systematic-debugging)",
+      "Skill(tdd)",
+      "Skill(large-feature-execution)",
+      "Skill(writing-skills)"
     ],
     "defaultMode": "acceptEdits"
   },

@@ -122,6 +122,9 @@ done
 | `review-pr` | 指定 PR をセルフレビュー。Reviewer A/B + Fact-checker の 3 エージェント並列構成（worktree 分離）。自分が author の PR は最大 5 巡で auto-fix モード、collaborator の PR は自動的に review-only モードで GitHub に summary review コメントを投稿（`--review-only` / `--fix` で明示 override 可）|
 | `handoff` | 作業状態を `~/.claude/handoff/` の Markdown に保存し、後で読み込んで続きから再開（`save` / `load` / `list`）。セッション跨ぎの引き継ぎやタスク切り替えに使う。`save` デフォルトタスク名は `/rename` 由来のセッション名（`~/.claude/sessions/`）を参照し、未設定でも会話文脈から推測して動作する |
 | `systematic-debugging` | バグ原因究明の系統的規律。根本原因を掴む前に修正しない大原則 + 4 フェーズ（計測でデータフロー遡及 → working/broken 差分 → 単一仮説 1 変数検証 → 失敗テスト先行で 1 点修正）。「3 回失敗したらアーキを疑う」等。serena / 既存の検証手段と接続。スタック固有のデータ調査 skill があればフェーズ 1 の具体手段として併用 |
+| `tdd` | test-first（RED→GREEN→REFACTOR）の既定手順。失敗（RED）を必ず観測してから最小実装。superpowers の「テスト前コード全削除」絶対ルールは不採用（「シンプル第一」と衝突しうるため）。後追いで固める場合も RED を一度は観測する |
+| `large-feature-execution` | 大型機能を永続プラン（`docs/development/plans/`）+ タスク単位 subagent + レビューゲートで遂行。context 圧縮を跨いで方針が揮発・散逸するのを防ぐ。大型機能のときだけ使う |
+| `writing-skills` | SKILL.md 作成規約。description=auto-load トリガー仕様として書く / frontmatter・本文構成 / README・settings.json への登録 / dead link を作らない検証 |
 
 ### 特定スタック前提
 
