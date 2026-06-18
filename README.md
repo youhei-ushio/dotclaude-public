@@ -119,6 +119,7 @@ done
 | `review-permissions` | 蓄積された許可要求ログ（`permission-request-logger.py` が記録）をクラスタ単位で対話レビューし、allowlist 追加 / skill 化 / hook 化 / スクリプト化 / 都度確認継続 を判断 |
 | `review-pr` | 指定 PR をセルフレビュー。Reviewer A/B + Fact-checker の 3 エージェント並列構成（worktree 分離）。自分が author の PR は最大 5 巡で auto-fix モード、collaborator の PR は自動的に review-only モードで GitHub に summary review コメントを投稿（`--review-only` / `--fix` で明示 override 可）|
 | `handoff` | 作業状態を `~/.claude/handoff/` の Markdown に保存し、後で読み込んで続きから再開（`save` / `load` / `list`）。セッション跨ぎの引き継ぎやタスク切り替えに使う。`save` デフォルトタスク名は `/rename` 由来のセッション名（`~/.claude/sessions/`）を参照し、未設定でも会話文脈から推測して動作する |
+| `systematic-debugging` | バグ原因究明の系統的規律。根本原因を掴む前に修正しない大原則 + 4 フェーズ（計測でデータフロー遡及 → working/broken 差分 → 単一仮説 1 変数検証 → 失敗テスト先行で 1 点修正）。「3 回失敗したらアーキを疑う」等。serena / 既存の検証手段と接続。スタック固有のデータ調査 skill があればフェーズ 1 の具体手段として併用 |
 
 ### 特定スタック前提
 
