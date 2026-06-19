@@ -1138,6 +1138,40 @@ if [ "$MODE" = "review-only" ] && [ "$POSTED_TO_GITHUB" = "True" ]:
 削除しない**。呼び出し元 (create-pr) が用意したファイルは呼び出し元側
 で削除されるため、本 skill は所有権を持つときだけ rm する。
 
+#### 孤児 worktree の防御的 sweep
+
+Step 2 で `isolation: "worktree"` で spawn した Reviewer A/B/Fact-checker の
+worktree (`.claude/worktrees/agent-*`) は、本来 harness がエージェント正常
+終了時に unlock + remove する。だが **エージェントが異常終了 (クラッシュ /
+強制終了 / セッション中断) すると lock が残り、worktree が `.claude/worktrees/`
+に残置される** (`git worktree prune` は lock を尊重するため掃除できない)。累積
+するとリポ丸ごとの複製がディスクを食い、コード解析ツール (serena 等) の index
+対象に入れば **メモリ肥大・OOM** を招く。
+
+そこで Step 8 で **lock の pid が死んでいる孤児 worktree のみ**を掃除する。
+**稼働中 (lock の pid が生存) の worktree は他の parallel セッションが使用中の
+可能性があるため絶対に触らない**。無条件の `rm -rf .claude/worktrees/*` は厳禁。
+
+```bash
+# .claude/worktrees 配下で lock の pid が死んでいる孤児だけを掃除。
+# pid が抽出できない (手動 lock 等) ものは安全側に倒して対象外。
+git worktree list --porcelain | awk '
+  /^worktree /{wt=$2}
+  /^locked/{ if (match($0,/pid [0-9]+/)) print wt"\t"substr($0,RSTART+4,RLENGTH-4) }
+' | while IFS=$'\t' read -r wt pid; do
+    case "$wt" in */.claude/worktrees/*) ;; *) continue ;; esac   # 対象限定
+    kill -0 "$pid" 2>/dev/null && continue                        # 稼働中は触らない
+    git worktree unlock "$wt" 2>/dev/null
+    git worktree remove --force "$wt" 2>/dev/null \
+      && git branch -D "worktree-$(basename "$wt")" 2>/dev/null   # 残骸ブランチも削除
+done
+git worktree prune
+```
+
+review-only モードでも本 sweep は実行してよい (collaborator のブランチや PR
+本文には触れず、ローカルの孤児 worktree を掃除するだけなので read-only 制約に
+反しない)。
+
 ---
 
 ## エスカレーション基準
