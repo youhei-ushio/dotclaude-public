@@ -422,6 +422,38 @@ parallel 専用コンテナ** の二段配置にすると安全:
 自プロジェクトでは初回構築後に `docker stats` で実測し、並走数の上限を
 逆算すること。
 
+### create-pr / review-pr の worktree と serena のメモリ肥大
+
+`create-pr` / `review-pr` はレビュー用に各リポの `.claude/worktrees/agent-*`
+に一時 git worktree（リポ丸ごと + `vendor/` 等の複製）を作る。これが
+**serena の index 対象に入ると、worktree 数に比例して serena プロセスの
+メモリが膨張し OOM を誘発する**（観測例: worktree 7 個で serena 単体 6.6GB
+→ swap 枯渇 → OOM kill）。二段で除外する:
+
+1. **machine 単位（主・全プロジェクトに効く）**: `~/.serena/serena_config.yml`
+   の `ignored_paths` に worktree パターンを追加。global の `ignored_paths` は
+   各プロジェクトに**加算適用**され、`project.yml` が serena 起動時に自動
+   再生成されても影響を受けない。
+
+   ```yaml
+   ignored_paths:
+   - "**/.claude/worktrees/**"
+   - ".claude/worktrees"
+   ```
+
+2. **repo 単位（従・belt-and-suspenders）**: 各 parallel の `.gitignore` に追加。
+   per-repo 任せだと repo ごとに設定が漏れるため、machine 単位を主とする。
+
+   ```gitignore
+   .claude/worktrees/
+   ```
+
+**既存環境への反映**: `ignored_paths` は serena 起動時に読まれるため、追記後は
+**serena を再起動**する（稼働中プロセスは肥大した index をメモリに保持しており、
+再起動でのみ解放される）。cache（`.serena/cache/`）のクリアは必須ではないが
+（除外後は worktree 配下が読み込まれないため）、ディスク回収のため推奨。異常
+終了で残った孤児 worktree は `review-pr` が次回実行時に自動 sweep する。
+
 ### 並走数の上限
 
 ディスクとメモリの制約で **8〜10 が現実的**。それを超えると Docker のネット
