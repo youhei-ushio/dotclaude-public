@@ -337,10 +337,11 @@ DIR_PREFIX=myapp-parallel NAME_PREFIX=myapp PARALLELS=6 ./tmux-grid.sh
 - ペインID で位置を確定させているため、ターミナルの縦横比に関係なく必ず 3 列×2 行になる
 - **`tmux-grid.sh` が可視化できるのは最大 6 ペイン**。推奨の「4〜7 本」運用などで
   7 本目以降を立てる場合、その clone は **グリッド外**（`tmux-grid.sh` では開かれない）。
-  通常どおり動作し `notify-sound.sh` の音通知は鳴るが、ペインボーダー通知
-  （`tmux-pane-awaiting.sh`）の対象外になる。7 本目もボーダーで監視したいなら、
-  別 tmux ウィンドウ / セッションで個別に `claude --name <NAME_PREFIX>-7` を起動する
-  （`tmux-grid.sh` の 6 ペイン上限は、グリッドの位置確定設計を保つため意図的に固定）
+  グリッド外でも `claude` は通常どおり動作し `notify-sound.sh` の音通知は鳴るが、
+  ペインボーダー通知（`tmux-pane-awaiting.sh`）は出ない。ボーダー書式
+  （`pane-border-format`）は `tmux-grid.sh` が作る 6 ペインセッションにのみ設定される
+  ため、別ターミナル / 別 tmux セッションで起動した 7 本目には反映されない
+  （6 ペイン上限は、グリッドの位置確定設計を保つため意図的に固定）
 
 ### Phase 5: 動作確認
 
