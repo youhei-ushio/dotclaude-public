@@ -12,7 +12,7 @@
 #   使い方:
 #     chmod +x tmux-grid.sh
 #     ./tmux-grid.sh [セッション名]                 # 省略時は "parallel"。各ペインは -c 付き (直近会話を継続) で起動
-#     ./tmux-grid.sh [セッション名] --no-continue   # -c 無しで起動 (設定/会話をリセットして新規で始めたいとき)
+#     ./tmux-grid.sh [セッション名] --no-continue   # -c 無しで起動 (設定/会話をリセットして新規で始めたいとき。短縮形: -n)
 #
 #   プロジェクトに合わせて DIR_PREFIX / NAME_PREFIX / BASE / PARALLELS を
 #   環境変数で上書きできる (下記デフォルトはサンプル):
@@ -120,7 +120,10 @@ F=$(tmux split-window -v -t "$C" -c "$(pane_dir 6)" -P -F '#{pane_id}')
 #   各 then 句末の #[default] は必須。#[...] 内のリテラルカンマは #, でエスケープする。
 # ペイン境界線を太線字形 (heavy box-drawing) にして見やすくする (tmux 3.2+)。
 # 実際の太さはフォント依存 (heavy 字形を太く描くフォントで効果が出る)。
-tmux set-option -t "$SESSION" pane-border-lines heavy
+# 装飾目的のオプションなので、旧 tmux (< 3.2) で unknown option になっても
+# set -e で script 全体を止めない (6 ペイン生成後・claude 起動前の abort を防ぐ)。
+# 失敗は握りつぶして、グリッド構築と claude 起動を続行する。
+tmux set-option -t "$SESSION" pane-border-lines heavy 2>/dev/null || true
 tmux set-option -t "$SESSION" pane-border-status top
 tmux set-option -t "$SESSION" pane-border-format \
   '#{?#{==:#{@pstate},input},#[fg=colour231#,bg=colour196#,bold] ⏳ P#{@pnum} 待機 #[default],#{?#{==:#{@pstate},done},#[fg=colour231#,bg=colour028#,bold] ✓ P#{@pnum} 完了 #[default],#{?@pnum,#[fg=colour244] P#{@pnum} #[default],}}}'
