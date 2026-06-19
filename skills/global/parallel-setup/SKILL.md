@@ -448,11 +448,32 @@ parallel 専用コンテナ** の二段配置にすると安全:
    .claude/worktrees/
    ```
 
-**既存環境への反映**: `ignored_paths` は serena 起動時に読まれるため、追記後は
-**serena を再起動**する（稼働中プロセスは肥大した index をメモリに保持しており、
-再起動でのみ解放される）。cache（`.serena/cache/`）のクリアは必須ではないが
-（除外後は worktree 配下が読み込まれないため）、ディスク回収のため推奨。異常
-終了で残った孤児 worktree は `review-pr` が次回実行時に自動 sweep する。
+**既存環境への反映（既存の汚染キャッシュは必ず purge する）**: `ignored_paths` の
+追記は**今後の index 対象**を絞るだけで、**追記前に worktree を index 済みのリポには
+肥大した `.serena/cache/` がそのまま残る**。serena は起動時にこの既存キャッシュ
+（`document_symbols.pkl` 等）をメモリへ展開し、**キャッシュがある限り cold index
+（再構築）は走らない**ため、**serena を再起動するだけではメモリは解放されない**
+（肥大した pkl を再ロードしてしまう）。したがって汚染リポでは **cache の purge が
+必須**（ディスク回収のためではなくメモリ解放のため）。`.serena/cache/` は派生データ
+なので、削除して失われるのは index キャッシュのみ（次回 index で `ignored_paths`
+準拠の小さなキャッシュに再構築される）。
+
+手順は必ず「**停止 → 削除 → 起動**」の順で行う:
+
+1. 各 parallel リポの cache サイズを比較し、桁違いに大きい outlier（= 汚染キャッシュ）を特定:
+
+   ```bash
+   for d in ~/repos/*-parallel-*; do
+     [ -d "$d/.serena/cache" ] && printf '%s\t%s\n' "$(du -sh "$d/.serena/cache" | cut -f1)" "$d"
+   done | sort -h
+   ```
+
+2. 汚染リポの serena を **停止 → `rm -rf <repo>/.serena/cache` → 起動**する（`<repo>` は
+   手順 1 の outlier の絶対パス）。停止を先にするのは、in-memory の肥大分が再起動でしか
+   解放されないことに加え、万一 serena が停止時に cache を flush する実装でも削除が
+   無効化されないようにするため（安全側）。
+
+異常終了で残った孤児 worktree は `review-pr` が次回実行時に自動 sweep する。
 
 ### 並走数の上限
 
