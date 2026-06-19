@@ -53,7 +53,7 @@ worktree は `.git` 本体 + 場合により `vendor/` / `node_modules/` / DB vo
 ├── <project>-parallel-4/   # role: issue-authoring
 ├── <project>-parallel-5/   # role: feature (本流 2 本目)
 ├── <project>-parallel-6/   # role: refactor
-└── <project>-parallel-7/   # role: docs-curation
+└── <project>-parallel-7/   # role: docs-curation（7本目以降は 6 ペイングリッド外 → Phase 4 参照）
 ```
 
 **`<project>-parallel-N` 形式**。同梱の `permission-request-logger.py` /
@@ -335,6 +335,12 @@ DIR_PREFIX=myapp-parallel NAME_PREFIX=myapp PARALLELS=6 ./tmux-grid.sh
   （応答待ち=赤 / 完了=緑 / 作業中=無印）ので、どのペインが呼んでいるか一目で分かる
 - グリッドは常に 3×2（6 ペイン）。`PARALLELS` が 6 未満なら余りは空ターミナル
 - ペインID で位置を確定させているため、ターミナルの縦横比に関係なく必ず 3 列×2 行になる
+- **`tmux-grid.sh` が可視化できるのは最大 6 ペイン**。推奨の「4〜7 本」運用などで
+  7 本目以降を立てる場合、その clone は **グリッド外**（`tmux-grid.sh` では開かれない）。
+  通常どおり動作し `notify-sound.sh` の音通知は鳴るが、ペインボーダー通知
+  （`tmux-pane-awaiting.sh`）の対象外になる。7 本目もボーダーで監視したいなら、
+  別 tmux ウィンドウ / セッションで個別に `claude --name <NAME_PREFIX>-7` を起動する
+  （`tmux-grid.sh` の 6 ペイン上限は、グリッドの位置確定設計を保つため意図的に固定）
 
 ### Phase 5: 動作確認
 
@@ -446,7 +452,8 @@ rm -rf ~/repos/<project>-parallel-N
   `docs/parallel-setup-runbook.md` のような手順書を別途用意する（本 skill
   名と同名 `docs/parallel-setup.md` は紛らわしいので避ける）
 - ペインボーダー通知（`tmux-pane-awaiting.sh`）は tmux 6 ペイングリッド運用が
-  前提。tmux を使わない場合は音通知（`notify-sound.sh`）のみになる
+  前提。tmux を使わない場合や、6 を超える parallel（7 本目以降）はグリッド外と
+  なり、音通知（`notify-sound.sh`）のみになる
 
 ## 関連 skill / hook
 
