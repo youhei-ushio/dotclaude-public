@@ -437,9 +437,12 @@ parallel 専用コンテナ** の二段配置にすると安全:
 
    ```yaml
    ignored_paths:
-   - "**/.claude/worktrees/**"
-   - ".claude/worktrees"
+   - "**/.claude/worktrees/**"   # 任意階層配下の worktree を網羅（主）
+   - ".claude/worktrees"         # ルート直下ケースの保険（任意。1 行目で概ね網羅されるため省略可）
    ```
+
+   （README の例は 1 行目のみに簡略化している。実用上は 1 行目で足り、
+   2 行目はディレクトリ実体マッチの保険。）
 
 2. **repo 単位（従・belt-and-suspenders）**: 各 parallel の `.gitignore` に追加。
    per-repo 任せだと repo ごとに設定が漏れるため、machine 単位を主とする。
@@ -462,6 +465,10 @@ parallel 専用コンテナ** の二段配置にすると安全:
 
 1. 各 parallel リポの cache サイズを比較し、桁違いに大きい outlier（= 汚染キャッシュ）を特定:
 
+   ここで対象にするのは **各 parallel clone 直下の `.serena/cache`**（= 親リポが
+   `.claude/worktrees/` 配下を index して肥大したキャッシュ）であり、worktree
+   ディレクトリ内部ではない点に注意。
+
    ```bash
    for d in ~/repos/*-parallel-*; do
      [ -d "$d/.serena/cache" ] && printf '%s\t%s\n' "$(du -sh "$d/.serena/cache" | cut -f1)" "$d"
@@ -474,9 +481,7 @@ parallel 専用コンテナ** の二段配置にすると安全:
    無効化されないようにするため（安全側）。
 
 異常終了 (harness ごとの落ち) で残った過去セッションの孤児 worktree は、
-`review-pr` Step 8 の防御的 sweep が次回実行時に掃除する（**この自動 sweep は
-#18 マージ後に有効**。それまでは手動で `git worktree prune` / `git worktree
-remove` が必要）。
+`review-pr` Step 8 の防御的 sweep が次回実行時に掃除する。
 
 ### 並走数の上限
 
