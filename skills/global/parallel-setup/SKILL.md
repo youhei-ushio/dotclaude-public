@@ -473,7 +473,10 @@ parallel 専用コンテナ** の二段配置にすると安全:
    解放されないことに加え、万一 serena が停止時に cache を flush する実装でも削除が
    無効化されないようにするため（安全側）。
 
-異常終了で残った孤児 worktree は `review-pr` が次回実行時に自動 sweep する。
+異常終了 (harness ごとの落ち) で残った過去セッションの孤児 worktree は、
+`review-pr` Step 8 の防御的 sweep が次回実行時に掃除する（**この自動 sweep は
+#18 マージ後に有効**。それまでは手動で `git worktree prune` / `git worktree
+remove` が必要）。
 
 ### 並走数の上限
 

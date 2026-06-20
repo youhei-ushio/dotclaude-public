@@ -92,7 +92,8 @@ done
 >
 > 詳細・既存環境への反映手順は `parallel-setup` skill「create-pr / review-pr の worktree と
 > serena のメモリ肥大」を参照。異常終了で残る孤児 worktree は `review-pr` が次回実行時に
-> 自動 sweep する。
+> 自動 sweep する（この自動 sweep は #18 マージ後に有効。それまでは手動で
+> `git worktree prune` 等が必要）。
 
 ## hooks 一覧
 
