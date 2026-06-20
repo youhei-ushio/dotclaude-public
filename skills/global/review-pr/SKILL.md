@@ -1141,22 +1141,37 @@ if [ "$MODE" = "review-only" ] && [ "$POSTED_TO_GITHUB" = "True" ]:
 #### 孤児 worktree の防御的 sweep
 
 Step 2 で `isolation: "worktree"` で spawn した Reviewer A/B/Fact-checker の
-worktree (`.claude/worktrees/agent-*`) は、本来 harness がエージェント正常
-終了時に unlock + remove する。だが **エージェントが異常終了 (クラッシュ /
-強制終了 / セッション中断) すると lock が残り、worktree が `.claude/worktrees/`
-に残置される** (`git worktree prune` は lock を尊重するため掃除できない)。累積
-するとリポ丸ごとの複製がディスクを食い、コード解析ツール (serena 等) の index
-対象に入れば **メモリ肥大・OOM** を招く。
+worktree (`.claude/worktrees/agent-*`) は、subagent が**正常終了すれば
+harness が unlock + remove する**。この worktree の lock を保持しているのは
+**subagent 自身ではなく親 harness プロセスの pid** であり、同一セッション内では
+親が生きている限り孤児は基本的に発生しない (harness が自動回収するため)。
+
+孤児が残るのは **harness ごと異常終了した過去のセッション** のケースである。
+親 harness が落ちると lock (= 既に死亡した過去 harness の pid) が残り、worktree
+が `.claude/worktrees/` に残置される (`git worktree prune` は **lock 付きの実在
+worktree を対象外とする**ため掃除できない)。累積するとリポ丸ごとの複製がディスク
+を食い、コード解析ツール (serena 等) の index 対象に入れば **メモリ肥大・OOM** を
+招く。
 
 そこで Step 8 で **lock の pid が死んでいる孤児 worktree のみ**を掃除する。
-**稼働中 (lock の pid が生存) の worktree は他の parallel セッションが使用中の
-可能性があるため絶対に触らない**。無条件の `rm -rf .claude/worktrees/*` は厳禁。
+これは「**過去の死亡セッションが残した孤児の防御的掃除**」であり、自セッション
+の worktree (親 harness が生存 = `kill -0` が成功) は対象外になる (意図どおり)。
+**lock の pid が生存している worktree は実行中の自セッション / 他の parallel
+セッションが使用中の可能性があるため絶対に触らない**。無条件の
+`rm -rf .claude/worktrees/*` は厳禁。
+
+**この sweep ブロックは本 skill 内で唯一の実行可能 shell** であり、末尾「注意
+事項」の「`bash` code block は疑似コード」宣言の **例外**である。Step 8 で親
+エージェントが `bash` ツールで **verbatim 実行する** (他ブロックのような
+`if [ ... ]:` 風の非実行疑似コードではない)。
 
 ```bash
 # .claude/worktrees 配下で lock の pid が死んでいる孤児だけを掃除。
 # pid が抽出できない (手動 lock 等) ものは安全側に倒して対象外。
+# wt 抽出は substr で行末まで取る (パスにスペースが含まれても切れないように。
+# $2 だと "worktree /path with space/..." が途中で切れる)。
 git worktree list --porcelain | awk '
-  /^worktree /{wt=$2}
+  /^worktree /{wt=substr($0,10)}
   /^locked/{ if (match($0,/pid [0-9]+/)) print wt"\t"substr($0,RSTART+4,RLENGTH-4) }
 ' | while IFS=$'\t' read -r wt pid; do
     case "$wt" in */.claude/worktrees/*) ;; *) continue ;; esac   # 対象限定
@@ -1236,10 +1251,11 @@ Step 5 を参照。判定の skip 判断は不要。条件が false でも実施
   キーが満たされれば起動する (allowed-tools での ACL は経路を区別しない)。
   起動の skip ロジックは Step 5 末尾の skip 条件で集中管理されているため、
   ACL に経路区別を持たせる必要はない
-- 本 skill 内の `bash` 言語タグ付き code block は **LLM 向け疑似コード**
+- 本 skill 内の `bash` 言語タグ付き code block は原則 **LLM 向け疑似コード**
   (Python 風 `if [ ... ]:` / `else:` 等を許容)。実行可能な shell スクリプト
   ではない。実機実行する箇所は親エージェントが個別に `bash` ツールで実行
-  する責務
+  する責務。**例外: Step 8「孤児 worktree の防御的 sweep」のブロックのみは
+  verbatim 実行を意図した実シェル** (当該節に明記)
 - `review-pr` 自身を **Skill ツール経由で呼ぶ** ことは可能 (create-pr Step 6
   の委譲経路) で、その場合 `review-pr` 本体は親と同一コンテキストで走る。
   これがバイアスを生まないのは、本 skill が「コードを書いた本人がレビュー
