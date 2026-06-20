@@ -13,7 +13,8 @@ allowed-tools: Read, Write, Edit, Bash, AskUserQuestion
 
 - **一括 yes 禁止**: 必ず 1 クラスタずつ判断を仰ぐ。`AskUserQuestion` を使う
 - **危険パターンガード**: 後述の DANGER_PATTERNS にマッチする提案は、追加前に必ず警告し再確認を取る
-- **書き換え前にバックアップ**: `~/.claude/settings.json` を編集する前に必ず `.bak.YYYYMMDDHHMMSS` を作る
+- **allow の書込先は `~/.claude/settings.local.json`**: 累積する個人 allowlist は gitignore 対象の local 設定に書く。`~/.claude/settings.json` は dotclaude リポへ symlink されている場合があり、そこへ書くと個人 path や machine 固有の allow が公開リポに焼き込まれてしまう。local が無ければ `{"permissions": {"allow": []}}` で新規作成する（hook 登録のような共有 config は引き続き `settings.json` 側）
+- **書き換え前にバックアップ**: `~/.claude/settings.local.json` を編集する前に必ず `.bak.YYYYMMDDHHMMSS` を作る
 - **既存ファイル絶対上書き禁止**: skill/hook/script 雛形の生成時、同名既存があれば timestamp suffix で別ファイル名にする
 
 ## 動作フロー
@@ -91,7 +92,7 @@ tool_name.startswith("mcp__"):
 
 #### (a) allow パターン追加
 
-1. `~/.claude/settings.json` を Read
+1. `~/.claude/settings.local.json` を Read（無ければ `{"permissions": {"allow": []}}` を新規作成）
 2. `permissions.allow` 配列を取得
 3. DANGER_PATTERNS チェック:
    ```
@@ -113,18 +114,19 @@ tool_name.startswith("mcp__"):
    ```
    いずれかにマッチしたら AskUserQuestion で「本当に追加するか」を再確認
 
-4. バックアップ: `cp ~/.claude/settings.json ~/.claude/settings.json.bak.$(date +%Y%m%d%H%M%S)`
+4. バックアップ: ファイルが既存なら `cp ~/.claude/settings.local.json ~/.claude/settings.local.json.bak.$(date +%Y%m%d%H%M%S)`（新規作成時はバックアップ不要）
 5. JSON 読み書きは Python で:
    ```python
    import json
-   p = Path.home() / ".claude" / "settings.json"
-   data = json.loads(p.read_text())
+   from pathlib import Path
+   p = Path.home() / ".claude" / "settings.local.json"
+   data = json.loads(p.read_text()) if p.exists() else {}
    allow = data.setdefault("permissions", {}).setdefault("allow", [])
    if new_pattern not in allow:
        allow.append(new_pattern)
    p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
    ```
-   既存のフォーマット維持のため `indent=2` で揃える (現状の settings.json も indent=2)
+   既存のフォーマット維持のため `indent=2` で揃える (現状の settings.local.json も indent=2)
 
 #### (b) skill 化
 
@@ -161,7 +163,7 @@ tool_name.startswith("mcp__"):
 1. スクリプト名 (kebab-case) と概要をユーザーに聞く
 2. 配置先: `~/.claude/scripts/<name>.sh` (dir が無ければ作成)
 3. シェル雛形 (TODO コメント込み) を生成
-4. allow パターンとして `Bash(~/.claude/scripts/<name>.sh:*)` を settings.json に追加
+4. allow パターンとして `Bash(~/.claude/scripts/<name>.sh:*)` を settings.local.json に追加（(a) と同じ書込先）
 
 #### (c-3) 都度確認継続
 
@@ -222,12 +224,12 @@ hook 化: 0 件
 都度確認継続: 2 件
 次回送り: 1 件
 
-settings.json バックアップ: ~/.claude/settings.json.bak.20260526145501
+settings.local.json バックアップ: ~/.claude/settings.local.json.bak.20260526145501
 ```
 
 ## エラーハンドリング
 
 - `permission-requests.jsonl` が空 → 「未レビュー件数: 0」で終了
 - JSON パース失敗行はスキップして警告のみ
-- settings.json バックアップに失敗したら処理中止 (allow 追加はやらない)
+- settings.local.json バックアップに失敗したら処理中止 (allow 追加はやらない)
 - 雛形ファイル作成時、既存があれば timestamp suffix で別ファイル化し、その旨を表示
