@@ -13,7 +13,7 @@ allowed-tools: Read, Write, Edit, Bash, AskUserQuestion
 
 - **一括 yes 禁止**: 必ず 1 クラスタずつ判断を仰ぐ。`AskUserQuestion` を使う
 - **危険パターンガード**: 後述の DANGER_PATTERNS にマッチする提案は、追加前に必ず警告し再確認を取る
-- **allow の書込先は `~/.claude/settings.local.json`**: 累積する個人 allowlist は gitignore 対象の local 設定に書く。`~/.claude/settings.json` は dotclaude リポへ symlink されている場合があり、そこへ書くと個人 path や machine 固有の allow が公開リポに焼き込まれてしまう。local が無ければ `{"permissions": {"allow": []}}` で新規作成する（hook 登録のような共有 config は引き続き `settings.json` 側）
+- **allow の書込先は `~/.claude/settings.local.json`**: 累積する個人 allowlist は gitignore 対象の local 設定に書く（`settings.local.json` は Claude Code が user-level の権限設定として `settings.json` とマージ・有効化して読み込むため、gitignore 対象でも allow は効く）。`~/.claude/settings.json` は dotclaude リポへ symlink されている場合があり、そこへ書くと個人 path や machine 固有の allow が公開リポに焼き込まれてしまう。local が無ければ `{"permissions": {"allow": []}}` で新規作成する（hook 登録のような共有 config は引き続き `settings.json` 側）
 - **書き換え前にバックアップ**: `~/.claude/settings.local.json` を編集する前に必ず `.bak.YYYYMMDDHHMMSS` を作る
 - **既存ファイル絶対上書き禁止**: skill/hook/script 雛形の生成時、同名既存があれば timestamp suffix で別ファイル名にする
 
@@ -92,7 +92,7 @@ tool_name.startswith("mcp__"):
 
 #### (a) allow パターン追加
 
-1. `~/.claude/settings.local.json` を Read（無ければ `{"permissions": {"allow": []}}` を新規作成）
+1. `~/.claude/settings.local.json` の有無を確認し、あれば Read（無ければ `{"permissions": {"allow": []}}` を起点とし、実ファイルは手順 5 の Python で生成）
 2. `permissions.allow` 配列を取得
 3. DANGER_PATTERNS チェック:
    ```
@@ -234,4 +234,5 @@ settings.local.json バックアップ: ~/.claude/settings.local.json.bak.202605
 - `permission-requests.jsonl` が空 → 「未レビュー件数: 0」で終了
 - JSON パース失敗行はスキップして警告のみ
 - 既存 settings.local.json のバックアップに失敗したら処理中止 (allow 追加はやらない)。新規作成パスはバックアップ対象外なので本ルールは適用されない
+- 既存 settings.local.json が壊れた JSON で `json.loads` が例外を投げたら、上書きせず処理中止してユーザーに報告 (空ファイルは `text.strip()` ガードで `{}` 起点として扱う)
 - 雛形ファイル作成時、既存があれば timestamp suffix で別ファイル化し、その旨を表示
