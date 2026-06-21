@@ -120,13 +120,15 @@ tool_name.startswith("mcp__"):
    import json
    from pathlib import Path
    p = Path.home() / ".claude" / "settings.local.json"
-   data = json.loads(p.read_text()) if p.exists() else {}
+   text = p.read_text() if p.exists() else ""
+   data = json.loads(text) if text.strip() else {}   # 空ファイル(0 byte)でも壊れない
    allow = data.setdefault("permissions", {}).setdefault("allow", [])
    if new_pattern not in allow:
        allow.append(new_pattern)
+   p.parent.mkdir(parents=True, exist_ok=True)
    p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
    ```
-   既存のフォーマット維持のため `indent=2` で揃える (現状の settings.local.json も indent=2)
+   既存のフォーマット維持のため `indent=2` で揃える (新規作成時も同じ indent で出力)
 
 #### (b) skill 化
 
@@ -231,5 +233,5 @@ settings.local.json バックアップ: ~/.claude/settings.local.json.bak.202605
 
 - `permission-requests.jsonl` が空 → 「未レビュー件数: 0」で終了
 - JSON パース失敗行はスキップして警告のみ
-- settings.local.json バックアップに失敗したら処理中止 (allow 追加はやらない)
+- 既存 settings.local.json のバックアップに失敗したら処理中止 (allow 追加はやらない)。新規作成パスはバックアップ対象外なので本ルールは適用されない
 - 雛形ファイル作成時、既存があれば timestamp suffix で別ファイル化し、その旨を表示
