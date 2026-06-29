@@ -422,6 +422,67 @@ parallel 専用コンテナ** の二段配置にすると安全:
 自プロジェクトでは初回構築後に `docker stats` で実測し、並走数の上限を
 逆算すること。
 
+### create-pr / review-pr の worktree と serena のメモリ肥大
+
+`create-pr` / `review-pr` はレビュー用に各リポの `.claude/worktrees/agent-*`
+に一時 git worktree（リポ丸ごと + `vendor/` 等の複製）を作る。これが
+**serena の index 対象に入ると、worktree 数に比例して serena プロセスの
+メモリが膨張し OOM を誘発する**（観測例: worktree 7 個で serena 単体 6.6GB
+→ swap 枯渇 → OOM kill）。二段で除外する:
+
+1. **machine 単位（主・全プロジェクトに効く）**: `~/.serena/serena_config.yml`
+   の `ignored_paths` に worktree パターンを追加。global の `ignored_paths` は
+   各プロジェクトに**加算適用**され、`project.yml` が serena 起動時に自動
+   再生成されても影響を受けない。
+
+   ```yaml
+   ignored_paths:
+   - "**/.claude/worktrees/**"   # 任意階層配下の worktree を網羅（主）
+   - ".claude/worktrees"         # ルート直下ケースの保険（任意。1 行目で概ね網羅されるため省略可）
+   ```
+
+   （README の例は 1 行目のみに簡略化している。実用上は 1 行目で足り、
+   2 行目はディレクトリ実体マッチの保険。）
+
+2. **repo 単位（従・belt-and-suspenders）**: 各 parallel の `.gitignore` に追加。
+   per-repo 任せだと repo ごとに設定が漏れるため、machine 単位を主とする。
+
+   ```gitignore
+   .claude/worktrees/
+   ```
+
+**既存環境への反映（既存の汚染キャッシュは必ず purge する）**: `ignored_paths` の
+追記は**今後の index 対象**を絞るだけで、**追記前に worktree を index 済みのリポには
+肥大した `.serena/cache/` がそのまま残る**。serena は起動時にこの既存キャッシュ
+（`document_symbols.pkl` 等）をメモリへ展開し、**キャッシュがある限り cold index
+（再構築）は走らない**ため、**serena を再起動するだけではメモリは解放されない**
+（肥大した pkl を再ロードしてしまう）。したがって汚染リポでは **cache の purge が
+必須**（ディスク回収のためではなくメモリ解放のため）。`.serena/cache/` は派生データ
+なので、削除して失われるのは index キャッシュのみ（次回 index で `ignored_paths`
+準拠の小さなキャッシュに再構築される）。
+
+手順は必ず「**停止 → 削除 → 起動**」の順で行う:
+
+1. 各 parallel リポの cache サイズを比較し、桁違いに大きい outlier（= 汚染キャッシュ）を特定:
+
+   ここで対象にするのは **各 parallel clone 直下の `.serena/cache`**（= 親リポが
+   `.claude/worktrees/` 配下を index して肥大したキャッシュ）であり、worktree
+   ディレクトリ内部ではない点に注意。
+
+   ```bash
+   for d in ~/repos/*-parallel-*; do
+     [ -d "$d/.serena/cache" ] && printf '%s\t%s\n' "$(du -sh "$d/.serena/cache" | cut -f1)" "$d"
+   done | sort -h
+   ```
+
+2. 汚染リポの serena を **停止 → `rm -rf <repo>/.serena/cache` → 起動**する（`<repo>` は
+   手順 1 の outlier の絶対パス）。停止を先にするのは、in-memory の肥大分が再起動でしか
+   解放されないことに加え、万一 serena が停止時に cache を flush する実装でも削除が
+   無効化されないようにするため（安全側）。
+
+異常終了 (harness ごとの落ち) で残った過去セッションの孤児 worktree は、
+`review-pr` Step 8 の防御的 sweep が次回実行時に掃除する。
+
 ### 並走数の上限
 
 ディスクとメモリの制約で **8〜10 が現実的**。それを超えると Docker のネット

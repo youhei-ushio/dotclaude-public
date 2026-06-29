@@ -82,6 +82,18 @@ done
 
 シンボリックリンク運用にしておくと、`git pull` するだけで `~/.claude/` 側にも反映される。
 
+> **serena 利用時の注意（worktree の除外）**: `create-pr` / `review-pr` はレビュー用に
+> 各リポの `.claude/worktrees/` に一時 git worktree（リポ丸ごとの複製）を作る。これが
+> serena の index 対象に入ると worktree 数に比例して serena のメモリが膨張し **OOM** を
+> 招くため、除外しておく:
+> - **machine 単位（推奨・全プロジェクトに効く）**: `~/.serena/serena_config.yml` の
+>   `ignored_paths` に `**/.claude/worktrees/**` を追加（symlink 管理外なので各マシンで手動）
+> - **repo 単位（belt-and-suspenders）**: 各リポの `.gitignore` に `.claude/worktrees/` を追加
+>
+> 詳細・既存環境への反映手順は `parallel-setup` skill「create-pr / review-pr の worktree と
+> serena のメモリ肥大」を参照。異常終了（harness ごとの落ち）で残った過去セッションの孤児
+> worktree は `review-pr` が次回実行時に自動 sweep する。
+
 ## hooks 一覧
 
 | Hook | トリガー | 役割 | 環境依存 |
