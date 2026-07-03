@@ -121,7 +121,14 @@ tool_name.startswith("mcp__"):
    from pathlib import Path
    p = Path.home() / ".claude" / "settings.local.json"
    text = p.read_text() if p.exists() else ""
-   data = json.loads(text) if text.strip() else {}   # 空ファイル(0 byte)でも壊れない
+   if text.strip():
+       try:
+           data = json.loads(text)
+       except json.JSONDecodeError:
+           # 破損 JSON は上書きせず中止 (下記エラーハンドリング規定)
+           raise SystemExit("settings.local.json が壊れています。上書きせず中止します")
+   else:
+       data = {}   # 空ファイル(0 byte)・不在でも壊れない
    allow = data.setdefault("permissions", {}).setdefault("allow", [])
    if new_pattern not in allow:
        allow.append(new_pattern)
