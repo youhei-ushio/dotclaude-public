@@ -181,6 +181,7 @@ tool_name.startswith("mcp__"):
 
 ```python
 import json, shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 LOG = Path.home() / ".claude" / "logs" / "permission-requests.jsonl"
