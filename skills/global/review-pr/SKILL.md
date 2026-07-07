@@ -507,7 +507,9 @@ PR をローカル展開しての「実機テスト」も禁止 (このリポジ
    例: "[Should-fix][Security] パスワードがログ出力されている"
        "[Must-fix] N+1 で 1000 件超のクエリが発生"
 5. 報告は「ファイルパス:行番号 — マーク — 内容 — 推奨アクション」
-   の形で構造化して返す
+   の形で構造化して返す。**行番号は改修後ファイル (diff 新側 / RIGHT) の
+   絶対行番号** を使う (review-only モードはこの行に inline コメントを
+   アンカーするため。旧側 / diff 相対の行番号だとアンカーできず body に降格する)
 6. 1 つの finding につき 1 行にまとめ、指摘番号 (R-1, R-2, ...) を
    付けて返す。後段のファクトチェック / 集約処理がパースしやすい
    ようにするため
@@ -958,20 +960,25 @@ inline にする (含まれなければ body へ降格):
 # ヘッダ付き) になり awk が誤パースするので付けない。
 gh pr diff "$N" --repo "$OWNER_REPO" \
   | awk '
-      /^\+\+\+ /  { f=$0; sub(/^\+\+\+ b\//,"",f); next }        # 対象ファイル (行全体からパス抽出=スペース対応)
-      /^@@ /      { match($0,/\+[0-9]+/); ln=substr($0,RSTART+1,RLENGTH-1)+0; next }
-      f==""       { next }                                       # 最初の +++ 前は無視
-      f=="+++ /dev/null" { next }                                # 削除ファイル (新側なし) は対象外
-      /^\+/       { print f"\t"ln; ln++; next }                  # 追加行 = コメント可
-      /^ /        { print f"\t"ln; ln++; next }                  # 文脈行 = コメント可
-      /^-/        { next }                                       # 削除行は新側行を進めない
+      # ヘッダ領域 (in_body=0) と hunk body (in_body=1) を構造的に区別する。
+      # body 内の内容行 "+++ ..." (元テキストが "++ ...") をヘッダと誤認しない。
+      /^diff --git / { in_body=0; f=""; next }                   # ファイル境界でリセット
+      /^@@ /  { match($0,/\+[0-9]+/); ln=substr($0,RSTART+1,RLENGTH-1)+0; in_body=1; next }
+      in_body==0 && /^\+\+\+ / { f=$0; sub(/^\+\+\+ b\//,"",f); next }  # 対象ファイル (行全体抽出=スペース対応)
+      in_body==0 { next }                                        # ヘッダ領域の他行 (--- / index / mode 等) は無視
+      f=="" || f=="+++ /dev/null" { next }                       # 新側なし (削除ファイル) は対象外
+      /^\+/   { print f"\t"ln; ln++; next }                      # 追加行 = コメント可
+      /^ /    { print f"\t"ln; ln++; next }                      # 文脈行 = コメント可
+      /^-/    { next }                                           # 削除行は新側行を進めない
     '
 ```
 
 この一覧を保持し、各 finding について `(finding.file, finding.line)` が一覧に
 **完全一致で含まれるか** を確認する (finding.file はリポルート相対に正規化して
 突合)。含まれれば `comments[]` に入れ、含まれなければ body の該当セクションへ降格
-する。これが 6.5 冒頭の「アンカー可能性検証」の実体。
+する。これが 6.5 冒頭の「アンカー可能性検証」の実体。**範囲コメント
+(`start_line`+`line`) を使う場合は start_line と line の両方が一覧に含まれる
+ことを確認する** (start_line が diff 外だと 422 で review 全体が拒否される)。
 
 **(2) `docs/temp/pr${N}-review.json` を Write する** (ファイル名の `${N}` と
 テンプレ内の `{...}` **波括弧プレースホルダ** は親エージェントが実値に展開して
@@ -1116,20 +1123,25 @@ else
     # 復旧不能になる。body に畳み込めば旧実装の summary 一括と同等 (全 finding が
     # body に載る、ただし行アンカーは無し) になる:
     tmp_body="docs/temp/pr${N}-review-bodyonly.json"
-    jq '{event, body: (.body + (if (.comments|length) > 0
+    # body 冒頭に「inline 失敗の縮退投稿」である旨を前置し、intro の
+    # 「inline コメント {I} 件」表示との齟齬を打ち消す。
+    jq '{event, body: ("> ⚠️ inline 行アンカー投稿に失敗したため、全指摘を本文にまとめています (行アンカーなし)。\n\n"
+          + .body + (if (.comments|length) > 0
           then "\n\n### inline 投稿できなかった指摘\n"
                + ([.comments[] | "- `\(.path):\(.line)` — \(.body)"] | join("\n"))
           else "" end))}' "docs/temp/pr${N}-review.json" > "$tmp_body"
     if gh api --method POST "repos/$OWNER_REPO/pulls/$N/reviews" --input "$tmp_body"; then
         POSTED_TO_GITHUB=True
         echo "[review-pr] inline 投稿に失敗したため、指摘を body にまとめた summary で投稿しました (行アンカーなし)"
+        rm -f "$tmp_body"
     else
         POSTED_TO_GITHUB=False
-        echo "[review-pr] 投稿に失敗しました。payload は残置するので手動で投稿してください: docs/temp/pr${N}-review.json"
+        # 元 payload (pr${N}-review.json) は 422 の原因行を含むため手動でも同じ 422 を
+        # 繰り返す。inline を外した body-only 版 ($tmp_body) を残置し、そちらの手動投稿を促す。
+        echo "[review-pr] 投稿に失敗しました。inline を外した body-only 版を残置します: $tmp_body (元の inline payload: docs/temp/pr${N}-review.json)"
         # ESCALATE_REASON は立てない (投稿失敗を escalate に格上げする運用はせず、
         # Step 7 で投稿失敗ステータスをそのまま報告する)
     fi
-    rm -f "$tmp_body"
 fi
 ```
 
