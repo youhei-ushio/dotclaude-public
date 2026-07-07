@@ -822,7 +822,7 @@ gh pr edit "$N" --repo "$OWNER_REPO" --body-file docs/temp/pr-body.md
 **placeholder 記法**: テンプレ内 `{iteration}` は本巡の iteration 番号 (1〜5)、
 `{CURRENT_SHA}` は Step 4 で取得した `$CURRENT_SHA` の値で展開する。`{件数}` /
 `{内容}` 等の `{...}` 系 placeholder は親エージェントが実値に展開してから
-`gh pr edit --body-file` で投稿する (Step 6.5.1 の markdown テンプレ方針と
+`gh pr edit --body-file` で投稿する (Step 6.5.1 の `{...}` プレースホルダ規約と
 統一。GitHub Markdown で `<...>` は未知 HTML タグとして strip される可能性が
 あるため、本 skill は全 markdown テンプレで `{...}` 形式を採用)。
 
@@ -958,14 +958,20 @@ inline にする (含まれなければ body へ降格):
 # ヘッダ付き) になり awk が誤パースするので付けない。
 gh pr diff "$N" --repo "$OWNER_REPO" \
   | awk '
-      /^\+\+\+ /  { f=$2; sub(/^b\//,"",f); next }               # 対象ファイル
+      /^\+\+\+ /  { f=$0; sub(/^\+\+\+ b\//,"",f); next }        # 対象ファイル (行全体からパス抽出=スペース対応)
       /^@@ /      { match($0,/\+[0-9]+/); ln=substr($0,RSTART+1,RLENGTH-1)+0; next }
       f==""       { next }                                       # 最初の +++ 前は無視
+      f=="+++ /dev/null" { next }                                # 削除ファイル (新側なし) は対象外
       /^\+/       { print f"\t"ln; ln++; next }                  # 追加行 = コメント可
       /^ /        { print f"\t"ln; ln++; next }                  # 文脈行 = コメント可
       /^-/        { next }                                       # 削除行は新側行を進めない
     '
 ```
+
+この一覧を保持し、各 finding について `(finding.file, finding.line)` が一覧に
+**完全一致で含まれるか** を確認する (finding.file はリポルート相対に正規化して
+突合)。含まれれば `comments[]` に入れ、含まれなければ body の該当セクションへ降格
+する。これが 6.5 冒頭の「アンカー可能性検証」の実体。
 
 **(2) `docs/temp/pr${N}-review.json` を Write する** (ファイル名の `${N}` と
 テンプレ内の `{...}` **波括弧プレースホルダ** は親エージェントが実値に展開して
@@ -985,7 +991,8 @@ gh pr diff "$N" --repo "$OWNER_REPO" \
 - **`comments[]` (inline)**: アンカー可能な finding 1 件 = 1 要素。`body` の
   先頭に主マークを明示する (例: `**[Must-fix]** [Security] パスワードがログ
   出力されている — {推奨アクション}`)。複数行にまたがる指摘は `start_line`
-  + `line` (両方 `"side":"RIGHT"`) で範囲指定してよい。
+  + `start_side` + `line` + `side` (いずれも `"RIGHT"`) で範囲指定してよい
+  (開始側は `side` ではなく `start_side` を使う。片方だけだと開始行が無視される)。
 - **`body` (サマリ本文)**: 以下を Markdown で集約する (件数 0 の項目は省略):
 
 ```markdown
@@ -1010,7 +1017,11 @@ PR #{N} を読みました (inline コメント {I} 件 + 以下)。
 **JSON エスケープに注意**: 上記 body / 各 `comments[].body` は複数行 Markdown
 なので、JSON 文字列として埋め込む際は **改行を `\n`、`"` を `\"` にエスケープ**
 して valid JSON にすること (親エージェントが Write する `pr${N}-review.json`
-は `gh api --input` がパースできる正しい JSON でなければ 400 で失敗する)。
+は `gh api --input` がパースできる正しい JSON でなければ 400 で失敗する)。手で
+エスケープすると引用符・バックティック混じりの finding 本文で崩れやすいので、
+**`jq -n` で組み立てて構文的に valid を保証する**のが安全 (例:
+`jq -n --arg body "$BODY" --argjson comments "$COMMENTS" '{event:"COMMENT", body:$body, comments:$comments}'`。
+`--arg` は文字列を自動エスケープする)。
 
 **マーク → 表現の規約** (主マーク = 1 個必須、付加マーク = 0 以上):
 
@@ -1099,13 +1110,19 @@ if gh api --method POST "repos/$OWNER_REPO/pulls/$N/reviews" \
     echo "[review-pr] PR #$N に inline review を投稿しました"
 else
     # 典型的な失敗は comments[] のどれかが diff 外の行を指して 422 になるケース。
-    # inline を諦め、payload の body だけを残した review で 1 度だけ再投稿する
-    # (旧実装の summary 一括 = 行アンカー無しへの縮退):
+    # inline を諦めるが、**comments[] を body 末尾にテキスト列挙してから** 1 度だけ
+    # 再投稿する。単に comments を捨てると inline 指摘 (Must-fix/Should-fix) が丸ごと
+    # 消え、しかも fallback 成功で POSTED_TO_GITHUB=True → Step 8 が payload を削除して
+    # 復旧不能になる。body に畳み込めば旧実装の summary 一括と同等 (全 finding が
+    # body に載る、ただし行アンカーは無し) になる:
     tmp_body="docs/temp/pr${N}-review-bodyonly.json"
-    jq '{event, body}' "docs/temp/pr${N}-review.json" > "$tmp_body"
+    jq '{event, body: (.body + (if (.comments|length) > 0
+          then "\n\n### inline 投稿できなかった指摘\n"
+               + ([.comments[] | "- `\(.path):\(.line)` — \(.body)"] | join("\n"))
+          else "" end))}' "docs/temp/pr${N}-review.json" > "$tmp_body"
     if gh api --method POST "repos/$OWNER_REPO/pulls/$N/reviews" --input "$tmp_body"; then
         POSTED_TO_GITHUB=True
-        echo "[review-pr] inline 投稿に失敗したため body-only summary で投稿しました (行アンカーは付いていません)"
+        echo "[review-pr] inline 投稿に失敗したため、指摘を body にまとめた summary で投稿しました (行アンカーなし)"
     else
         POSTED_TO_GITHUB=False
         echo "[review-pr] 投稿に失敗しました。payload は残置するので手動で投稿してください: docs/temp/pr${N}-review.json"
