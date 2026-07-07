@@ -1008,6 +1008,9 @@ body 降格する)。含まれれば `comments[]` に入れ、含まれなけれ
   出力されている — {推奨アクション}`)。複数行にまたがる指摘は `start_line`
   + `start_side` + `line` + `side` (いずれも `"RIGHT"`) で範囲指定してよい
   (開始側は `side` ではなく `start_side` を使う。片方だけだと開始行が無視される)。
+  `commit_id` は省略する (GitHub は最新 head を基準に line を検証する。diff 取得
+  ～投稿の間に PR が force-push されると行がずれて 422 になりうるが、その場合は
+  6.5.3 の body-only fallback で縮退投稿に落ちるため致命ではない)。
 - **`body` (サマリ本文)**: 以下を Markdown で集約する (件数 0 の項目は省略):
 
 ```markdown
@@ -1119,17 +1122,21 @@ AskUserQuestion({
 には `--repo` フラグが無いため。cwd 依存の誤投稿を防ぐ):
 
 ```bash
-if gh api --method POST "repos/$OWNER_REPO/pulls/$N/reviews" \
-       --input "docs/temp/pr${N}-review.json"; then
+# 一次投稿 (inline)。失敗時は HTTP ステータスで分岐する (gh api はエラー時
+# stderr に "HTTP <code>" を出す)。err への代入直後の $? は gh api の終了コード。
+err=$(gh api --method POST "repos/$OWNER_REPO/pulls/$N/reviews" \
+        --input "docs/temp/pr${N}-review.json" 2>&1)
+if [ $? -eq 0 ]; then
     POSTED_TO_GITHUB=True
     echo "[review-pr] PR #$N に inline review を投稿しました"
-else
-    # 典型的な失敗は comments[] のどれかが diff 外の行を指して 422 になるケース。
-    # inline を諦めるが、**comments[] を body 末尾にテキスト列挙してから** 1 度だけ
-    # 再投稿する。単に comments を捨てると inline 指摘 (Must-fix/Should-fix) が丸ごと
-    # 消え、しかも fallback 成功で POSTED_TO_GITHUB=True → Step 8 が payload を削除して
-    # 復旧不能になる。body に畳み込めば旧実装の summary 一括と同等 (全 finding が
-    # body に載る、ただし行アンカーは無し) になる:
+elif printf '%s' "$err" | grep -q 'HTTP 422'; then
+    # 422 = comments[] のいずれかが diff 外行を指してバリデーションで review 全体
+    # が拒否されたケース。**サーバ側に review は生成されていない**ので二重通知の
+    # 恐れなく再投稿してよい。inline を諦めるが、comments[] を body 末尾に列挙して
+    # から 1 度だけ再投稿する (単に comments を捨てると inline 指摘 (Must-fix/
+    # Should-fix) が丸ごと消え、fallback 成功→Step 8 が payload 削除で復旧不能に
+    # なる。body に畳み込めば旧 summary 一括と同等 = 全 finding が body に載る、
+    # ただし行アンカーは無し):
     tmp_body="docs/temp/pr${N}-review-bodyonly.json"
     # body 冒頭に「inline 失敗の縮退投稿」である旨を前置し、intro の
     # 「inline コメント {I} 件」表示との齟齬を打ち消す。
@@ -1140,16 +1147,22 @@ else
           else "" end))}' "docs/temp/pr${N}-review.json" > "$tmp_body"
     if gh api --method POST "repos/$OWNER_REPO/pulls/$N/reviews" --input "$tmp_body"; then
         POSTED_TO_GITHUB=True
-        echo "[review-pr] inline 投稿に失敗したため、指摘を body にまとめた summary で投稿しました (行アンカーなし)"
+        echo "[review-pr] inline が 422 だったため、指摘を body にまとめた summary で投稿しました (行アンカーなし)"
         rm -f "$tmp_body"
     else
         POSTED_TO_GITHUB=False
-        # 元 payload (pr${N}-review.json) は 422 の原因行を含むため手動でも同じ 422 を
-        # 繰り返す。inline を外した body-only 版 ($tmp_body) を残置し、そちらの手動投稿を促す。
-        echo "[review-pr] 投稿に失敗しました。inline を外した body-only 版を残置します: $tmp_body (元の inline payload: docs/temp/pr${N}-review.json)"
-        # ESCALATE_REASON は立てない (投稿失敗を escalate に格上げする運用はせず、
-        # Step 7 で投稿失敗ステータスをそのまま報告する)
+        echo "[review-pr] body-only 再投稿にも失敗しました。body-only 版を残置します: $tmp_body (元の inline payload: docs/temp/pr${N}-review.json)"
     fi
+else
+    # 非 422 (5xx / タイムアウト / ネットワーク断など)。**サーバ側で review が
+    # 生成済みの可能性があり、盲目的に再 POST すると 2 つ目の review = 二重通知**
+    # になる (本 skill が最重視する「1 review = 1 通知」「不可逆通知の最小化」に
+    # 反する)。よって自動再投稿はせず、失敗として残置しユーザーに手動確認を促す:
+    POSTED_TO_GITHUB=False
+    echo "[review-pr] 投稿が非 422 エラーで失敗しました: $err"
+    echo "[review-pr] サーバ側で投稿済みの可能性があるため自動再投稿はしません。PR の review 一覧を確認し、未投稿なら手動投稿してください: docs/temp/pr${N}-review.json"
+    # ESCALATE_REASON は立てない (投稿失敗を escalate に格上げする運用はせず、
+    # Step 7 で投稿失敗ステータスをそのまま報告する)
 fi
 ```
 
