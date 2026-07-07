@@ -983,9 +983,10 @@ gh pr diff "$N" --repo "$OWNER_REPO" \
 `b/` 除去後 = リポルート相対なので、これを揃えないと全 finding が不一致で
 body 降格する)。含まれれば `comments[]` に入れ、含まれなければ body の該当
 セクションへ降格する。これが 6.5 冒頭の「アンカー可能性検証」の実体。**範囲
-コメント (`start_line`+`line`) を使う場合は start_line と line の両方が一覧に
-含まれ、かつ両者が同一 hunk 内にあることを確認する** (start_line が diff 外だと、
-また範囲が hunk をまたぐと、GitHub が 422 で review 全体を拒否する)。
+コメント (`start_line`+`line`) を使う場合は、start_line から line までの
+**全行が同一 path の一覧に連続して含まれる** ことを確認する (= 範囲全体が
+単一 hunk 内。単一行ケースと同じ厳密さで突合する)。start_line が diff 外だと、
+また範囲が hunk をまたぐと、GitHub が 422 で review 全体を拒否する。
 
 **(2) `docs/temp/pr${N}-review.json` を Write する** (ファイル名の `${N}` と
 テンプレ内の `{...}` **波括弧プレースホルダ** は親エージェントが実値に展開して
@@ -1086,7 +1087,7 @@ AskUserQuestion({
 回答ごとの遷移:
 
 - (a) 投稿する → 6.5.3 へ
-- (b) markdown を編集してから投稿 → 以下のループを実行:
+- (b) payload を編集してから投稿 → 以下のループを実行:
     ```text
     EDIT_LOOP_MAX = 3   # 連続 (b) 選択の上限。到達したら (c) 扱いで終了
     edit_loop_count = 0
