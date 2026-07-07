@@ -509,7 +509,10 @@ PR をローカル展開しての「実機テスト」も禁止 (このリポジ
 5. 報告は「ファイルパス:行番号 — マーク — 内容 — 推奨アクション」
    の形で構造化して返す。**行番号は改修後ファイル (diff 新側 / RIGHT) の
    絶対行番号** を使う (review-only モードはこの行に inline コメントを
-   アンカーするため。旧側 / diff 相対の行番号だとアンカーできず body に降格する)
+   アンカーするため。旧側 / diff 相対の行番号だとアンカーできず body に降格する)。
+   **ファイルパスはリポルート相対** (diff の `b/` 除去後と同形。例
+   `skills/global/review-pr/SKILL.md`) で報告する (worktree 絶対パスは使わない。
+   突合はパス完全一致のため、絶対パスだと全 finding が body に降格する)
 6. 1 つの finding につき 1 行にまとめ、指摘番号 (R-1, R-2, ...) を
    付けて返す。後段のファクトチェック / 集約処理がパースしやすい
    ようにするため
@@ -974,11 +977,15 @@ gh pr diff "$N" --repo "$OWNER_REPO" \
 ```
 
 この一覧を保持し、各 finding について `(finding.file, finding.line)` が一覧に
-**完全一致で含まれるか** を確認する (finding.file はリポルート相対に正規化して
-突合)。含まれれば `comments[]` に入れ、含まれなければ body の該当セクションへ降格
-する。これが 6.5 冒頭の「アンカー可能性検証」の実体。**範囲コメント
-(`start_line`+`line`) を使う場合は start_line と line の両方が一覧に含まれる
-ことを確認する** (start_line が diff 外だと 422 で review 全体が拒否される)。
+**完全一致で含まれるか** を確認する。finding.file が worktree 絶対パス
+(reviewer は worktree 分離で走るため起こりうる) の場合はリポルート prefix を
+除去して**リポルート相対に正規化**してから突合する (一覧の path は diff の
+`b/` 除去後 = リポルート相対なので、これを揃えないと全 finding が不一致で
+body 降格する)。含まれれば `comments[]` に入れ、含まれなければ body の該当
+セクションへ降格する。これが 6.5 冒頭の「アンカー可能性検証」の実体。**範囲
+コメント (`start_line`+`line`) を使う場合は start_line と line の両方が一覧に
+含まれ、かつ両者が同一 hunk 内にあることを確認する** (start_line が diff 外だと、
+また範囲が hunk をまたぐと、GitHub が 422 で review 全体を拒否する)。
 
 **(2) `docs/temp/pr${N}-review.json` を Write する** (ファイル名の `${N}` と
 テンプレ内の `{...}` **波括弧プレースホルダ** は親エージェントが実値に展開して
@@ -1227,6 +1234,10 @@ if [ "$OWNED_BODY_FILE" = "True" ]:
 # (ユーザーが手で投稿 or 編集したいケース)
 if [ "$MODE" = "review-only" ] && [ "$POSTED_TO_GITHUB" = "True" ]:
     rm -f "docs/temp/pr${N}-review.json"
+    # 注: fallback 成功 (body-only) 時は 6.5.3 が既に $tmp_body を rm 済み。
+    # inline・body-only の両方が失敗 (POSTED_TO_GITHUB=False) した場合は
+    # pr${N}-review.json と pr${N}-review-bodyonly.json の 2 ファイルが
+    # 意図的に残置され、ユーザーが手で投稿 / 編集 / 破棄する。
 ```
 
 `docs/temp/` に他のファイルがある場合があるため、**ディレクトリごと
