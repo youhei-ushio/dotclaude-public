@@ -107,6 +107,10 @@ git -C ~/repos/dotclaude pull --ff-only
 スキップし警告する。新規マシンへの初期セットアップも、上記「セットアップ」の手動 `ln` の代わりに
 このスクリプト 1 本で完結する。
 
+dangling 検知・`--prune` は「このリポ (`$REPO_DIR`) 由来の symlink」だけを対象にする（他リポや手動 symlink を
+誤って消さないため）。したがって **デプロイに使った clone と同じディレクトリのスクリプトを実行する**こと。
+別 clone から実行すると既存リンクの向き先が一致せず、dangling 検知が働かない。
+
 > **serena 利用時の注意（worktree の除外）**: `create-pr` / `review-pr` はレビュー用に
 > 各リポの `.claude/worktrees/` に一時 git worktree（リポ丸ごとの複製）を作る。これが
 > serena の index 対象に入ると worktree 数に比例して serena のメモリが膨張し **OOM** を

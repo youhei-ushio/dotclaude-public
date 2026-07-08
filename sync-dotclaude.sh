@@ -27,7 +27,12 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="${CLAUDE_HOME:-$HOME/.claude}"
 
 PRUNE=0
-[ "${1:-}" = "--prune" ] && PRUNE=1
+for arg in "$@"; do
+  case "$arg" in
+    --prune) PRUNE=1 ;;
+    *) echo "不明な引数: $arg (使用可能: --prune)" >&2; exit 64 ;;
+  esac
+done
 
 linked=0; okcnt=0; fixed=0; warncnt=0; pruned=0
 
@@ -103,8 +108,10 @@ done
 # 5) 致命チェック: settings.json が参照する hook が全て実在するか
 echo "-- settings.json 参照 hook の実在検査"
 missing_hook=0
-# "~/.claude/hooks/<name>" と "$CLAUDE_HOME/hooks/<name>" 双方の書式を拾う
-refs="$(grep -oE '(~|\$CLAUDE_HOME|\$HOME)/\.claude/hooks/[A-Za-z0-9._-]+' "$REPO_DIR/settings.json" 2>/dev/null | sort -u || true)"
+# hook として発火するのは "command" 行のみ。permissions の allow 文字列
+# (例: "Bash(~/.claude/hooks/xxx:*)") は tool ブロックに無関係なので対象外にする。
+refs="$(grep -E '"command"' "$REPO_DIR/settings.json" 2>/dev/null \
+  | grep -oE '(~|\$CLAUDE_HOME|\$HOME)/\.claude/hooks/[A-Za-z0-9._-]+' | sort -u || true)"
 if [ -n "$refs" ]; then
   while IFS= read -r ref; do
     [ -n "$ref" ] || continue
