@@ -21,6 +21,12 @@
 #
 # 環境変数:
 #   CLAUDE_HOME  デプロイ先（既定: ~/.claude）
+#
+# 終了コード:
+#   0   正常（不足リンク作成含む。警告・欠落なし）
+#   1   FATAL: settings.json の "command" が参照する hook が実在しない（要即対応）
+#   2   要手動確認: dangling symlink 残置、または同名実体の居座りスキップ
+#   64  引数エラー（未知フラグ）
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
