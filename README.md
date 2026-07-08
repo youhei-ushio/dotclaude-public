@@ -80,7 +80,32 @@ for d in ~/repos/dotclaude/skills/global/*/; do
 done
 ```
 
-シンボリックリンク運用にしておくと、`git pull` するだけで `~/.claude/` 側にも反映される。
+シンボリックリンク運用にしておくと、**既存の** skill / hook / 単体ファイルは `git pull` するだけで中身が `~/.claude/` 側に反映される。
+
+> **注意（更新取り込み時のドリフト）**: `git pull` で追従するのは *既にリンク済み* の項目の中身だけ。
+> リポに **新規追加** された skill・hook は、`~/.claude/skills` / `~/.claude/hooks` に symlink が
+> 張られていないため取りこぼす。特に `settings.json` はファイル symlink で即最新化されるので、
+> 「新しい hook を参照するのに実体ファイルが無い」状態になると **その hook が発火する全 tool が
+> ブロック**される。これを防ぐため、pull 後は次の同期スクリプトを実行する。
+
+### 更新の取り込み（pull 後の同期）
+
+```bash
+git -C ~/repos/dotclaude pull --ff-only
+~/repos/dotclaude/sync-dotclaude.sh          # 不足 symlink を冪等に張る＋検証
+# ~/repos/dotclaude/sync-dotclaude.sh --prune  # リポから消えた skill/hook の壊れリンクも除去
+```
+
+`sync-dotclaude.sh` がやること（何度実行しても安全）:
+
+1. `skills/global/*` と `hooks/*` の **不足 symlink を作成**（新規追加の取りこぼしを解消）
+2. `CLAUDE.md` / `settings.json` / `statusline.sh` の symlink を保証（新規セットアップ兼用）
+3. `settings.json` が参照する hook が **全て実在するか検証**（欠落があれば `exit 1` で停止し、全 tool ブロック事故を未然に検知）
+4. リポから消えた skill/hook を指す **dangling symlink を検知**（`--prune` 指定時のみ除去）
+
+同名の実ディレクトリ/実ファイルが居座っている場合は、ネスト事故（`skills/<name>/<name>` の二重化）を避けて
+スキップし警告する。新規マシンへの初期セットアップも、上記「セットアップ」の手動 `ln` の代わりに
+このスクリプト 1 本で完結する。
 
 > **serena 利用時の注意（worktree の除外）**: `create-pr` / `review-pr` はレビュー用に
 > 各リポの `.claude/worktrees/` に一時 git worktree（リポ丸ごとの複製）を作る。これが
