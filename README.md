@@ -166,6 +166,7 @@ dangling 検知・`--prune` は「このリポ (`$REPO_DIR`) 由来の symlink�
 | `tdd` | test-first（RED→GREEN→REFACTOR）の既定手順。失敗（RED）を必ず観測してから最小実装。superpowers の「テスト前コード全削除」絶対ルールは不採用（「シンプル第一」と衝突しうるため）。後追いで固める場合も RED を一度は観測する |
 | `large-feature-execution` | 大型機能を永続プラン（`docs/development/plans/`）+ タスク単位 subagent + レビューゲートで遂行。context 圧縮を跨いで方針が揮発・散逸するのを防ぐ。大型機能のときだけ使う |
 | `writing-skills` | SKILL.md 作成規約。description=auto-load トリガー仕様として書く / frontmatter・本文構成 / README・settings.json への登録 / dead link を作らない検証 |
+| `questionnaire` | 不明点を推測・棚上げせず質問票化する。カテゴリ別に整理した設問（各設問に推奨解＋その理由）を HTML で生成 → ブラウザで回答 → エクスポート JSON を読み取り、確定した質問＋回答を利用リポの `qa/<slug>-questionnaire.md` に永続化する。HTML は回答用の揮発ファイルで、永続の正は `qa/*.md`。不明点 1〜2 件で AskUserQuestion が足りる場合は使わない |
 
 ### 特定スタック前提
 
