@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>質問票</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+    background: #f5f6f8;
+    color: #1a1a2e;
+    line-height: 1.6;
+    padding: 0 0 120px;
+  }
+
+  .header {
+    background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+    color: #fff;
+    padding: 32px 24px 24px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  }
+  .header h1 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+  .header p { font-size: 13px; opacity: .85; margin-bottom: 12px; }
+  .header .phase-badge {
+    display: inline-block;
+    background: rgba(255,255,255,.15);
+    border: 1px solid rgba(255,255,255,.25);
+    border-radius: 4px;
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .progress-bar-container {
+    background: #e2e8f0;
+    border-radius: 0;
+    height: 4px;
+    width: 100%;
+  }
+  .progress-bar {
+    background: #48bb78;
+    height: 100%;
+    width: 0%;
+    transition: width .3s ease;
+    border-radius: 0;
+  }
+  .progress-text {
+    font-size: 12px;
+    color: rgba(255,255,255,.7);
+    margin-top: 8px;
+  }
+
+  .container { max-width: 800px; margin: 0 auto; padding: 24px 16px; }
+
+  .category-section { margin-bottom: 32px; }
+  .category-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #2d3748;
+    border-left: 4px solid #4a90d9;
+    padding-left: 12px;
+    margin-bottom: 16px;
+  }
+
+  .question-card {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 12px;
+    transition: border-color .2s;
+  }
+  .question-card.modified {
+    border-color: #ed8936;
+    box-shadow: 0 0 0 1px #ed893633;
+  }
+  .question-card .q-number {
+    display: inline-block;
+    background: #edf2f7;
+    color: #4a5568;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-bottom: 8px;
+  }
+  .question-card.modified .q-number {
+    background: #feebc8;
+    color: #c05621;
+  }
+  .question-text {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .question-context {
+    font-size: 13px;
+    color: #718096;
+    margin-bottom: 14px;
+  }
+
+  .q-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 6px 0 12px;
+  }
+  .q-badge {
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 3px;
+    padding: 2px 8px;
+    background: #edf2f7;
+    color: #4a5568;
+  }
+  .q-badge.sev-critical { background: #fed7d7; color: #c53030; }
+  .q-badge.sev-major { background: #feebc8; color: #c05621; }
+  .q-badge.sev-minor { background: #e2e8f0; color: #4a5568; }
+  .q-location {
+    font-size: 12px;
+    color: #a0aec0;
+    margin-bottom: 12px;
+    word-break: break-word;
+  }
+  .q-location strong { color: #718096; font-weight: 600; }
+
+  .option-group { display: flex; flex-direction: column; gap: 8px; }
+  .option-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .option-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s;
+    font-size: 14px;
+  }
+  .option-label:hover { background: #f7fafc; border-color: #cbd5e0; }
+  .option-label.selected {
+    background: #ebf8ff;
+    border-color: #4a90d9;
+  }
+  .option-label input[type="radio"] {
+    accent-color: #4a90d9;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+  .option-label .default-badge {
+    font-size: 10px;
+    background: #bee3f8;
+    color: #2b6cb0;
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-weight: 600;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .default-reason {
+    font-size: 12px;
+    color: #a0aec0;
+    padding-left: 38px;
+    margin-top: 2px;
+  }
+
+  .custom-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s;
+    font-size: 14px;
+  }
+  .custom-input-wrapper:hover { background: #f7fafc; border-color: #cbd5e0; }
+  .custom-input-wrapper.selected {
+    background: #ebf8ff;
+    border-color: #4a90d9;
+  }
+  .custom-input-wrapper input[type="radio"] {
+    accent-color: #4a90d9;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+  .custom-input-wrapper input[type="text"] {
+    flex: 1;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .custom-input-wrapper input[type="text"]:focus { border-color: #4a90d9; }
+  .custom-input-wrapper input[type="text"]:disabled {
+    background: #f7fafc;
+    color: #a0aec0;
+  }
+
+  .footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border-top: 1px solid #e2e8f0;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+    z-index: 100;
+    box-shadow: 0 -2px 8px rgba(0,0,0,.06);
+  }
+  .footer .summary-text {
+    font-size: 13px;
+    color: #718096;
+  }
+  .footer .summary-text strong { color: #c05621; }
+  .btn-export {
+    background: #4a90d9;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 28px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+    font-family: inherit;
+  }
+  .btn-export:hover { background: #3a7bc8; }
+  .btn-export:active { background: #2c5fa0; }
+
+  .toast {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(.9);
+    background: #1a202c;
+    color: #fff;
+    padding: 16px 32px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: all .3s ease;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+
+  .dup-warning {
+    background: #fed7d7;
+    border: 1px solid #fc8181;
+    color: #c53030;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    word-break: break-word;
+  }
+
+  @media (max-width: 600px) {
+    .header { padding: 20px 16px 16px; }
+    .header h1 { font-size: 17px; }
+    .question-card { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1 id="title"></h1>
+  <p id="description"></p>
+  <span class="phase-badge" id="phase-badge"></span>
+  <div class="progress-text" id="progress-text"></div>
+  <div class="progress-bar-container">
+    <div class="progress-bar" id="progress-bar"></div>
+  </div>
+</div>
+
+<div class="container" id="questions-container"></div>
+
+<div class="footer">
+  <span class="summary-text" id="summary-text"></span>
+  <button class="btn-export" id="btn-export">回答をエクスポート</button>
+</div>
+
+<div class="toast" id="toast">エクスポート完了</div>
+
+<script>
+const QUESTIONS_DATA = [];
+
+const PHASE_LABELS = {
+  'issue-creation': 'Issue 作成',
+  'design': '設計',
+  'implementation': '実装'
+};
+
+const data = QUESTIONS_DATA;
+
+// 内部 state / radio グループのキーは「票全体の出現順」から作る (q.id は使わない)。
+// q.id はカテゴリを跨いだ一意性が保証されないため、キーに使うと重複時に
+// radio グループが共有され、回答が黙って消える。
+const defaultSelections = {};
+const currentSelections = {};
+// key -> { id: 元の q.id, question, category }
+const questionMeta = {};
+
+function init() {
+  if (!data || !data.categories || !data.categories.length) {
+    document.getElementById('title').textContent = '質問票';
+    document.getElementById('questions-container').innerHTML =
+      '<div style="text-align:center;padding:48px;color:#718096;">データが読み込まれていません。テンプレートの QUESTIONS_DATA が未設定です。</div>';
+    document.getElementById('btn-export').disabled = true;
+    return;
+  }
+
+  document.getElementById('title').textContent = data.title || '質問票';
+  document.getElementById('description').textContent = data.description || '';
+  document.getElementById('phase-badge').textContent = PHASE_LABELS[data.phase] || data.phase || '';
+
+  const container = document.getElementById('questions-container');
+  let qIndex = 0;
+  const seenIds = new Set();
+  const duplicateIds = [];
+
+  data.categories.forEach(cat => {
+    const section = document.createElement('div');
+    section.className = 'category-section';
+    section.innerHTML = `<div class="category-title">${esc(cat.name)}</div>`;
+
+    (cat.questions || []).forEach(q => {
+      qIndex++;
+      const key = 'k' + qIndex;
+      if (q.id != null) {
+        if (seenIds.has(q.id)) duplicateIds.push(q.id);
+        seenIds.add(q.id);
+      }
+      questionMeta[key] = { id: q.id, question: q.question, category: cat.name };
+
+      const opts = q.options || [];
+      const defaultOpt = opts.find(o => o.isDefault);
+      // 選択の同一性は opt.value ではなく「選択肢の出現順」で判定する。value での
+      // 比較は (a) value が数値だと radio.value (常に文字列) と型が食い違い、既定値を
+      // あえてクリックしただけで isModified が立つ、(b) 同一設問内に同じ value が
+      // 2 つあると別の選択肢を選んでも isModified が立たない、という誤記録を生む。
+      const defaultIdx = defaultOpt ? String(opts.indexOf(defaultOpt)) : null;
+      defaultSelections[key] = defaultIdx;
+      // value / label は文字列に正規化して保持する。未操作時は生の値、クリック後は
+      // radio.value (常に文字列) となって同じ選択肢でも型が変わるため。
+      currentSelections[key] = defaultOpt
+        ? { optKey: defaultIdx, value: str(defaultOpt.value), label: str(defaultOpt.label), custom: null }
+        : { optKey: null, value: null, label: '', custom: null };
+
+      const card = document.createElement('div');
+      card.className = 'question-card';
+      card.dataset.qid = key;
+
+      let html = `<span class="q-number">Q${qIndex}</span>`;
+      html += `<div class="question-text">${esc(q.question)}</div>`;
+      if (q.context) html += `<div class="question-context">${esc(q.context)}</div>`;
+
+      const badges = [];
+      if (q.severity) {
+        const sev = String(q.severity).toLowerCase();
+        const sevClass = ['critical', 'major', 'minor'].includes(sev) ? ` sev-${sev}` : '';
+        badges.push(`<span class="q-badge${sevClass}">${esc(q.severity)}</span>`);
+      }
+      if (q.problemType) badges.push(`<span class="q-badge">${esc(q.problemType)}</span>`);
+      if (badges.length) html += `<div class="q-meta">${badges.join('')}</div>`;
+      if (q.targetDoc || q.location) {
+        const loc = [q.targetDoc, q.location].filter(Boolean).map(esc).join(' — ');
+        html += `<div class="q-location"><strong>該当:</strong> ${loc}</div>`;
+      }
+
+      html += `<div class="option-group">`;
+
+      opts.forEach((opt, optIdx) => {
+        // isDefault が複数あっても既定値は defaultOpt (先頭) だけ。opt.isDefault で
+        // 判定すると DOM は最後の checked が勝ち、内部 state (先頭) と乖離する。
+        const isTheDefault = opt === defaultOpt;
+        const checked = isTheDefault ? 'checked' : '';
+        const selectedClass = isTheDefault ? ' selected' : '';
+        html += `<div class="option-item">`;
+        html += `<label class="option-label${selectedClass}" data-optidx="${optIdx}">`;
+        html += `<input type="radio" name="${esc(key)}" value="${esc(opt.value)}" ${checked} data-optidx="${optIdx}" data-optlabel="${esc(opt.label)}">`;
+        html += `<span>${esc(opt.label)}</span>`;
+        if (isTheDefault) html += `<span class="default-badge">推奨</span>`;
+        html += `</label>`;
+        if (opt.defaultReason) html += `<div class="default-reason">${esc(opt.defaultReason)}</div>`;
+        html += `</div>`;
+      });
+
+      html += `<div class="option-item">`;
+      html += `<div class="custom-input-wrapper" data-custom-wrapper="1">`;
+      html += `<input type="radio" name="${esc(key)}" value="__custom__" data-optlabel="">`;
+      html += `<span style="flex-shrink:0;color:#718096;">その他:</span>`;
+      html += `<input type="text" class="custom-input" disabled placeholder="自由記述...">`;
+      html += `</div>`;
+      html += `</div>`;
+
+      html += `</div>`;
+      card.innerHTML = html;
+      section.appendChild(card);
+    });
+
+    container.appendChild(section);
+  });
+
+  // id 重複は回答自体には影響しない (キーは出現順) が、エクスポート JSON の id が
+  // 重複して Step 7 の突き合わせが曖昧になるため、生成元に気付かせる。
+  if (duplicateIds.length) {
+    const warn = document.createElement('div');
+    warn.className = 'dup-warning';
+    warn.textContent =
+      `質問 id が重複しています: ${[...new Set(duplicateIds)].join(', ')} — `
+      + '回答は出現順で管理されるため失われませんが、エクスポート JSON の id が重複します。'
+      + '質問データ側で票全体を通して一意な id を振り直してください。';
+    container.insertBefore(warn, container.firstChild);
+  }
+
+  container.addEventListener('change', e => {
+    if (e.target.type === 'radio') {
+      onSelect(e.target);
+    }
+  });
+  container.addEventListener('input', e => {
+    if (e.target.type === 'text' && e.target.classList.contains('custom-input')) {
+      onCustomInput(e.target);
+    }
+  });
+  document.getElementById('btn-export').addEventListener('click', exportAnswers);
+
+  updateProgress();
+}
+
+// null/undefined は null のまま、それ以外は文字列化する。
+// undefined を残すと JSON.stringify がキーごとエクスポートから落とす。
+function str(v) {
+  return v == null ? null : String(v);
+}
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function onSelect(radio) {
+  const card = radio.closest('.question-card');
+  if (!card) return;
+  const qId = card.dataset.qid;
+  const customInput = card.querySelector('.custom-input');
+  const isCustom = radio.dataset.optidx === undefined;
+  const optKey = isCustom ? '__custom__' : radio.dataset.optidx;
+  const label = radio.dataset.optlabel || '';
+
+  card.querySelectorAll('.option-label, .custom-input-wrapper').forEach(el => el.classList.remove('selected'));
+
+  if (isCustom) {
+    const wrapper = card.querySelector('.custom-input-wrapper');
+    if (wrapper) wrapper.classList.add('selected');
+    if (customInput) {
+      customInput.disabled = false;
+      customInput.focus();
+    }
+    currentSelections[qId] = { optKey: optKey, value: null, label: '', custom: customInput ? customInput.value : '' };
+  } else {
+    const labelEl = radio.closest('.option-label');
+    if (labelEl) labelEl.classList.add('selected');
+    if (customInput) customInput.disabled = true;
+    currentSelections[qId] = { optKey: optKey, value: str(radio.value), label: str(label), custom: null };
+  }
+
+  if (defaultSelections[qId] !== optKey) {
+    card.classList.add('modified');
+  } else {
+    card.classList.remove('modified');
+  }
+
+  updateProgress();
+}
+
+function onCustomInput(inputEl) {
+  const card = inputEl.closest('.question-card');
+  if (!card) return;
+  const qId = card.dataset.qid;
+  if (currentSelections[qId] && currentSelections[qId].optKey === '__custom__') {
+    currentSelections[qId].custom = inputEl.value;
+  }
+}
+
+function updateProgress() {
+  const qIds = Object.keys(defaultSelections);
+  const total = qIds.length;
+  const unanswered = qIds.filter(k => !currentSelections[k] || currentSelections[k].optKey == null).length;
+  const modified = qIds.filter(k => currentSelections[k] && currentSelections[k].optKey !== defaultSelections[k]).length;
+  const pct = total > 0 ? Math.round((modified / total) * 100) : 0;
+
+  document.getElementById('progress-bar').style.width = pct + '%';
+  const parts = [`${modified} / ${total} 問を変更`];
+  if (unanswered > 0) parts.push(`未回答 ${unanswered} 件`);
+  document.getElementById('progress-text').textContent = parts.join(' / ');
+  document.getElementById('summary-text').innerHTML = modified > 0
+    ? `<strong>${modified} 件</strong>をデフォルトから変更`
+    : 'すべてデフォルトのまま';
+}
+
+function exportAnswers() {
+  const emptyCustom = Object.keys(currentSelections).filter(k =>
+    currentSelections[k].optKey === '__custom__' && !currentSelections[k].custom
+  );
+  if (emptyCustom.length > 0) {
+    const proceed = confirm(`「その他」を選択した ${emptyCustom.length} 問で自由記述が空です。このまま出力しますか？`);
+    if (!proceed) return;
+  }
+
+  // answers[] は質問の出現順で並ぶ。index (1 始まり) がその順序であり、
+  // Step 7 の突き合わせキーはこの index。id は票データ側の値をそのまま返す参考情報で、
+  // 一意性が保証されないため突き合わせには使わない。
+  const answers = Object.keys(currentSelections).map((key, i) => {
+    const sel = currentSelections[key];
+    const qi = questionMeta[key] || {};
+    const isCustom = sel.optKey === '__custom__';
+    return {
+      index: i + 1,
+      id: str(qi.id),
+      category: str(qi.category) || '',
+      question: str(qi.question) || '',
+      isAnswered: sel.optKey != null,
+      // 「その他」の判定は isCustom を使う。selectedOption は選択肢の value を
+      // そのまま返すため、value が文字列 "custom" の正当な選択肢と区別できない。
+      isCustom: isCustom,
+      selectedOption: isCustom ? 'custom' : sel.value,
+      selectedLabel: isCustom ? '(その他)' : sel.label,
+      customInput: isCustom ? (sel.custom == null ? '' : sel.custom) : null,
+      isModified: defaultSelections[key] !== sel.optKey
+    };
+  });
+
+  const exportedAt = new Date().toISOString();
+  const result = {
+    exportedAt: exportedAt,
+    title: data.title,
+    phase: data.phase,
+    totalQuestions: answers.length,
+    answeredCount: answers.filter(a => a.isAnswered).length,
+    modifiedCount: answers.filter(a => a.isModified).length,
+    answers: answers
+  };
+
+  // ファイル名にエクスポート時刻を入れて毎回一意にする。固定名だと、既存ファイルが
+  // あるときブラウザが "(1)" 付きで保存し、読み取り側が古い回答を掴んでしまう。
+  // スタンプは利用者が見て分かるよう「ローカル時刻」で作る (exportedAt は UTC の
+  // ISO8601 なので、そのまま使うと JST では日付が前日になり混乱する)。
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`
+    + `-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+  const filename = `questionnaire-answers-${stamp}.json`;
+
+  const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+  showToast(filename);
+}
+
+function showToast(filename) {
+  const t = document.getElementById('toast');
+  t.textContent = `エクスポート完了: ${filename}`;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
