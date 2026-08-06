@@ -123,6 +123,51 @@ const SAMPLE = {
   ],
 };
 
+// 質問データ側の契約違反 (id 重複 / isDefault 複数) に対する防御を検証するための票。
+// どちらも「回答が黙って消える」「画面と記録が食い違う」形で qa/*.md に誤内容が
+// 確定記録されるため、テンプレート側の耐性を回帰対象にする。
+const SAMPLE_EDGE = {
+  title: '契約違反サンプル',
+  phase: 'design',
+  categories: [
+    {
+      name: 'カテゴリA',
+      questions: [
+        {
+          id: 'dup',
+          question: 'カテゴリA の設問',
+          options: [
+            { value: 'a', label: 'A-1', isDefault: true, defaultReason: null },
+            { value: 'b', label: 'A-2', isDefault: false, defaultReason: null },
+          ],
+        },
+      ],
+    },
+    {
+      name: 'カテゴリB',
+      questions: [
+        {
+          // 別カテゴリで同じ id (契約違反)
+          id: 'dup',
+          question: 'カテゴリB の設問',
+          options: [
+            { value: 'a', label: 'B-1', isDefault: true, defaultReason: null },
+            { value: 'b', label: 'B-2', isDefault: false, defaultReason: null },
+          ],
+        },
+        {
+          id: 'multi',
+          question: 'isDefault が複数ある設問',
+          options: [
+            { value: 'a', label: 'M-1', isDefault: true, defaultReason: null },
+            { value: 'b', label: 'M-2', isDefault: true, defaultReason: null },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
 const PLACEHOLDER = 'const QUESTIONS_DATA = [];';
 const tpl = readFileSync(TEMPLATE, 'utf8');
 
@@ -137,8 +182,10 @@ check('置換ターゲットがちょうど 1 箇所', tpl.split(PLACEHOLDER).le
 
 const filled = join(WORK, 'filled.html');
 const pristine = join(WORK, 'pristine.html');
+const edge = join(WORK, 'edge.html');
 writeFileSync(filled, tpl.replace(PLACEHOLDER, `const QUESTIONS_DATA = ${JSON.stringify(SAMPLE)};`));
 writeFileSync(pristine, tpl);
+writeFileSync(edge, tpl.replace(PLACEHOLDER, `const QUESTIONS_DATA = ${JSON.stringify(SAMPLE_EDGE)};`));
 
 const chrome = spawn(CHROME, [
   '--headless=new',
@@ -247,14 +294,14 @@ try {
   check('targetDoc / location を「該当:」行に表示',
     (await s.eval('document.querySelector(".q-location").textContent')).includes('SKILL.md — Step 3'));
   check('デフォルト選択肢が checked + 推奨バッジ',
-    (await s.eval('document.querySelector(\'input[name="q1"][value="a"]\').checked && !!document.querySelector(".default-badge")')) === true);
+    (await s.eval('document.querySelectorAll(\'.question-card\')[0].querySelector(\'input[value="a"]\').checked && !!document.querySelector(".default-badge")')) === true);
   check('defaultReason を表示',
     (await s.eval('document.querySelector(".default-reason").textContent')) === 'A を推奨する理由');
 
   // label は原本 (issue 本文・コードベース) 由来の文字列が入りうるため、esc() の回帰は必須。
   check('label がエスケープされ script 要素が注入されない (XSS 防止)',
     (await s.eval(`(() => {
-      const card = document.querySelector('[data-qid="q2"]');
+      const card = document.querySelectorAll('.question-card')[1];
       const span = card.querySelector('input[value="b"]').nextElementSibling;
       return span.textContent === '選択肢B<script>'
         && span.children.length === 0
@@ -265,26 +312,26 @@ try {
   check('初期サマリー', (await s.eval('document.getElementById("summary-text").textContent')) === 'すべてデフォルトのまま');
 
   // --- 操作: デフォルト以外を選択 ---
-  await s.eval('document.querySelector(\'input[name="q2"][value="b"]\').click()');
+  await s.eval('document.querySelectorAll(\'.question-card\')[1].querySelector(\'input[value="b"]\').click()');
   await sleep(100);
   check('変更した設問カードに .modified が付く',
-    (await s.eval('document.querySelector(\'[data-qid="q2"]\').classList.contains("modified")')) === true);
+    (await s.eval('document.querySelectorAll(\'.question-card\')[1].classList.contains("modified")')) === true);
   check('未変更の設問カードは .modified なし',
-    (await s.eval('document.querySelector(\'[data-qid="q1"]\').classList.contains("modified")')) === false);
+    (await s.eval('document.querySelectorAll(\'.question-card\')[0].classList.contains("modified")')) === false);
   check('進捗テキストが 1 件変更に更新',
     (await s.eval('document.getElementById("progress-text").textContent')) === '1 / 3 問を変更');
 
   // --- 操作: 「その他」+ 自由記述 ---
   check('「その他」入力欄は初期状態で disabled',
-    (await s.eval('document.querySelector(\'[data-qid="q3"] .custom-input\').disabled')) === true);
-  await s.eval('document.querySelector(\'[data-qid="q3"] input[value="__custom__"]\').click()');
+    (await s.eval('document.querySelectorAll(\'.question-card\')[2].querySelector(\'.custom-input\').disabled')) === true);
+  await s.eval('document.querySelectorAll(\'.question-card\')[2].querySelector(\'input[value="__custom__"]\').click()');
   await sleep(100);
   check('「その他」選択で入力欄が有効化',
-    (await s.eval('document.querySelector(\'[data-qid="q3"] .custom-input\').disabled')) === false);
+    (await s.eval('document.querySelectorAll(\'.question-card\')[2].querySelector(\'.custom-input\').disabled')) === false);
   check('「その他」選択で wrapper に .selected',
-    (await s.eval('document.querySelector(\'[data-qid="q3"] .custom-input-wrapper\').classList.contains("selected")')) === true);
+    (await s.eval('document.querySelectorAll(\'.question-card\')[2].querySelector(\'.custom-input-wrapper\').classList.contains("selected")')) === true);
   await s.eval(`(() => {
-    const el = document.querySelector('[data-qid="q3"] .custom-input');
+    const el = document.querySelectorAll('.question-card')[2].querySelector('.custom-input');
     el.value = '両方を段階的に導入する';
     el.dispatchEvent(new Event('input', { bubbles: true }));
   })()`);
@@ -304,7 +351,11 @@ try {
   await s.eval('document.getElementById("btn-export").click()');
   await sleep(200);
 
-  check('ダウンロードファイル名', (await s.eval('window.__downloadName')) === 'questionnaire-answers.json');
+  // 固定名だと既存ファイル存在時にブラウザが "(1)" 付きで保存し、読み取り側が
+  // 古い回答を掴む。エクスポート時刻入りの一意名であることを固定する。
+  const downloadName = await s.eval('window.__downloadName');
+  check('ダウンロードファイル名がエクスポート時刻入りで一意',
+    /^questionnaire-answers-\d{8}-\d{6}\.json$/.test(downloadName), downloadName);
 
   const exported = JSON.parse(await s.eval('window.__blob.text()', true));
   check('エクスポート: totalQuestions=3', exported.totalQuestions === 3);
@@ -324,11 +375,121 @@ try {
     JSON.stringify(a3));
   check('エクスポートに category / question が入る',
     a1.category === '設計判断' && a3.category === 'スコープ' && a1.question === 'デフォルトのまま確定する設問');
+  // 内部キーは出現順だが、エクスポートの id は質問データ側の id を返す (Step 7 の突き合わせ用)
+  check('エクスポートの id が元の q.id',
+    a1.id === 'q1' && a2.id === 'q2' && a3.id === 'q3',
+    JSON.stringify([a1.id, a2.id, a3.id]));
   check('トーストが表示される',
     (await s.eval('document.getElementById("toast").classList.contains("show")')) === true);
   check('操作中に JS エラーなし', errors.length === 0, errors.join(' | '));
 
   s.close();
+
+  // --- 質問データ側の契約違反に対する防御 ---
+  {
+    const { s: e, errors: eErrors } = await newPage('file://' + edge);
+
+    check('id 重複でも設問が 3 件描画される',
+      (await e.eval('document.querySelectorAll(".question-card").length')) === 3);
+    check('id 重複を画面で警告する',
+      (await e.eval('!!document.querySelector(".dup-warning") && document.querySelector(".dup-warning").textContent.includes("dup")')) === true);
+    check('id 重複でも radio グループが独立している',
+      (await e.eval(`(() => {
+        const names = [...document.querySelectorAll('.question-card')]
+          .map(c => c.querySelector('input[type=radio]').name);
+        return new Set(names).size === names.length;
+      })()`)) === true);
+
+    // カテゴリA を A-2 に変更しても、カテゴリB の既定選択が解除されないこと
+    await e.eval(`(() => {
+      const cards = [...document.querySelectorAll('.question-card')];
+      cards[0].querySelector('input[data-optlabel="A-2"]').click();
+    })()`);
+    await sleep(100);
+    check('id 重複時に片方の選択がもう片方を解除しない',
+      (await e.eval('document.querySelector(\'input[data-optlabel="B-1"]\').checked')) === true);
+
+    check('isDefault が複数でも checked は先頭のみ',
+      (await e.eval(`(() => {
+        const card = [...document.querySelectorAll('.question-card')][2];
+        const checked = [...card.querySelectorAll('input[type=radio]')].filter(r => r.checked);
+        return checked.length === 1 && checked[0].dataset.optlabel === 'M-1';
+      })()`)) === true);
+    check('isDefault が複数でも推奨バッジは先頭のみ',
+      (await e.eval(`(() => {
+        const card = [...document.querySelectorAll('.question-card')][2];
+        return card.querySelectorAll('.default-badge').length === 1;
+      })()`)) === true);
+
+    // 表示 (DOM) と内部 state の一致: 未操作の multi 設問が「既定値のまま」で出ること
+    await e.eval(`(() => {
+      URL.createObjectURL = (b) => { window.__blob = b; return 'blob:stub'; };
+      HTMLAnchorElement.prototype.click = function () { window.__downloadName = this.download; };
+    })()`);
+    await e.eval('document.getElementById("btn-export").click()');
+    await sleep(200);
+    const edgeExport = JSON.parse(await e.eval('window.__blob.text()', true));
+    check('id 重複でも回答が失われない (3 件エクスポートされる)',
+      edgeExport.totalQuestions === 3 && edgeExport.answers.length === 3,
+      JSON.stringify(edgeExport.totalQuestions));
+    const multi = edgeExport.answers[2];
+    check('isDefault 複数時、画面の選択と記録が一致する (M-1 が既定値承認)',
+      multi.selectedLabel === 'M-1' && multi.isModified === false,
+      JSON.stringify(multi));
+    check('id 重複時も両設問がそれぞれの回答を保持する',
+      edgeExport.answers[0].selectedLabel === 'A-2' && edgeExport.answers[1].selectedLabel === 'B-1',
+      JSON.stringify(edgeExport.answers.slice(0, 2)));
+    check('契約違反サンプルでも JS エラーなし', eErrors.length === 0, eErrors.join(' | '));
+
+    e.close();
+  }
+
+  // --- SKILL.md Step 3 のエスケープ手順が実際に効くこと ---
+  // 質問文は issue 本文やコードベース由来なので `</script>` を含みうる。素の
+  // JSON.stringify は `<` をエスケープしないため inline script が早期終了する。
+  // Step 3 が要求する「`<` を < に置換してから埋め込む」が有効であることを固定する。
+  {
+    const XSS = {
+      title: 'エスケープ検証',
+      phase: 'design',
+      categories: [{
+        name: '仕様確認',
+        questions: [{
+          id: 'x1',
+          question: 'テンプレートの </script> タグをどう扱うか',
+          options: [
+            { value: 'a', label: 'そのまま', isDefault: true, defaultReason: null },
+            { value: 'b', label: '除去する', isDefault: false, defaultReason: null },
+          ],
+        }],
+      }],
+    };
+    const raw = JSON.stringify(XSS);
+    const escaped = raw.replace(/</g, '\\u003c');
+
+    // エスケープ済みでも JSON としては等価であること (値が変わらないこと)
+    check('\\u003c エスケープは JSON として等価',
+      JSON.stringify(JSON.parse(escaped)) === raw);
+
+    const okPath = join(WORK, 'escaped.html');
+    const ngPath = join(WORK, 'unescaped.html');
+    writeFileSync(okPath, tpl.replace(PLACEHOLDER, `const QUESTIONS_DATA = ${escaped};`));
+    writeFileSync(ngPath, tpl.replace(PLACEHOLDER, `const QUESTIONS_DATA = ${raw};`));
+
+    const { s: ok } = await newPage('file://' + okPath);
+    check('エスケープすれば </script> を含む質問文が壊れずに描画される',
+      (await ok.eval('document.querySelectorAll(".question-card").length')) === 1
+      && (await ok.eval('document.querySelector(".question-text").textContent'))
+        === 'テンプレートの </script> タグをどう扱うか');
+    ok.close();
+
+    // 未エスケープ時は script が早期終了し、init が走らず設問が 0 件になる。
+    // これが「エスケープが必須」である理由の実証。
+    const { s: ng } = await newPage('file://' + ngPath);
+    check('未エスケープだと script が早期終了して描画されない (エスケープ必須の根拠)',
+      (await ng.eval('document.querySelectorAll(".question-card").length')) === 0);
+    ng.close();
+  }
 } finally {
   chrome.kill();
 }

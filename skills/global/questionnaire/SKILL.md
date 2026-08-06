@@ -67,6 +67,11 @@ HTML は**回答用の揮発ファイル**（UX のための一時物）、`qa/*
 以下の形式で JSON を構築する（`scope` / `targetDocs` / `relatedScope` / `inferencePolicy` と各質問の HVE メタは任意。分かる範囲で埋める）。
 なお `targetDocs`（トップレベル・配列）は**票全体の対象スコープ**、各質問の `targetDoc`（単数）は**その質問が該当する具体ドキュメント**で、別物として使い分ける:
 
+**必須制約:**
+
+- **`id` は票全体で一意にする**（カテゴリを跨いでも重複させない。`q1`〜`qN` の通し番号でよい）。重複するとエクスポート JSON の `id` が重複し、Step 7 の突き合わせが曖昧になる（回答自体は出現順で管理されるため失われず、テンプレートは重複を検知して画面に警告を出す）。
+- **`isDefault: true` は 1 問につき 1 つだけ**にする。複数指定した場合は先頭のみが既定値として扱われる。
+
 ```json
 {
   "title": "【質問票タイトル】",
@@ -113,18 +118,23 @@ HTML は**回答用の揮発ファイル**（UX のための一時物）、`qa/*
 ### Step 3: HTML 生成（回答用の揮発ファイル）
 
 1. 出力先ディレクトリを確認: `mkdir -p docs/temp`（存在しなければ作成。揮発なので `qa/` には置かない）
-2. テンプレートを読み込む: `~/.claude/skills/questionnaire/assets/questionnaire-template.html`
-3. テンプレート内の `const QUESTIONS_DATA = [];` を Step 2 で作成した JSON で置換
-4. 置換後の HTML を `docs/temp/questionnaire.html` に Write
+2. **Step 2 の JSON を `docs/temp/questionnaire-data.json` に Write する**（Step 7 で突き合わせる元データ。理由は下記）
+3. テンプレートを読み込む: `~/.claude/skills/questionnaire/assets/questionnaire-template.html`
+4. テンプレート内の `const QUESTIONS_DATA = [];` を Step 2 の JSON で置換する。**埋め込む前に JSON 中の `<` をすべて `\u003c` にエスケープする**（JSON 文字列としては等価なので値は変わらない。エスケープしないと、質問文や `location` に `</script>` が含まれたとき inline script が早期終了して画面が壊れる）
+5. 置換後の HTML を `docs/temp/questionnaire.html` に Write
+6. 生成物を検証する（不正なリテラルを埋め込むと inline script が parse エラーになり、白画面のまま原因が分からなくなるため）:
+   - `python3 -m json.tool docs/temp/questionnaire-data.json > /dev/null` で JSON が妥当なこと
+   - `docs/temp/questionnaire.html` に `const QUESTIONS_DATA = [];` が残っていないこと（置換漏れ検出）
+   - `docs/temp/questionnaire.html` に `</script>` が 1 個だけであること（breakout 検出）
 
 ```
 テンプレート内の置換対象（この 1 行を丸ごと置換）:
 const QUESTIONS_DATA = [];
 ↓
-const QUESTIONS_DATA = { ... Step 2 の JSON ... };
+const QUESTIONS_DATA = { ... Step 2 の JSON（`<` は \u003c にエスケープ済み） ... };
 ```
 
-**Step 2 の JSON は永続化（Step 7）でも使うため、Claude が保持しておく**（HTML から回収せず元データを正とする）。
+**Step 2 の JSON は必ずファイル（`docs/temp/questionnaire-data.json`）に書く。** 会話コンテキストに保持するだけにしてはならない。回答待ちは人間の作業時間を挟むため長時間・大量トークンを跨ぐ工程であり、context 圧縮で揮発すると Step 6 のサマリーも Step 7 の永続化も再現不能になる（Step 8 で HTML も消えるため元データが完全に失われる）。永続の正は `qa/*.md`、その生成元の正はこの JSON ファイルである。
 
 ### Step 4: ブラウザで開く
 
@@ -139,13 +149,27 @@ open docs/temp/questionnaire.html
 
 ユーザーが「回答しました」「完了」等と伝えたら:
 
-1. `~/Downloads/questionnaire-answers.json` を Read（ブラウザのダウンロード先設定やファイル名重複により、パスが異なる場合はユーザーに確認する）
-2. 各回答を解釈:
+1. エクスポートされたファイルを特定する。ファイル名は `questionnaire-answers-<エクスポート日時>.json` 形式（例: `questionnaire-answers-20260804-071530.json`）で毎回一意になる:
+
+   ```bash
+   ls -t ~/Downloads/questionnaire-answers-*.json 2>/dev/null | head -1
+   ```
+
+   見つからない場合はブラウザのダウンロード先設定をユーザーに確認する。
+
+2. Read したら**その回答が今回の票のものであることを検証する**（古い回答をそのまま `qa/*.md` に確定記録しないため）:
+   - `title` が `docs/temp/questionnaire-data.json` の `title` と一致すること
+   - `exportedAt` が `docs/temp/questionnaire.html` の生成時刻より後であること
+   - `totalQuestions` が今回の設問数と一致すること
+
+   いずれかが合わなければ別の票／古い回答なので、ユーザーに再エクスポートを依頼する。
+
+3. 各回答を解釈:
    - `isAnswered` が `false` (`selectedOption` が `null`) → 未回答扱い。ユーザーに再確認する
    - `selectedOption` が `"custom"` かつ `customInput` が空文字 → 「その他」選択だが自由記述無し。ユーザーに再確認する
    - `selectedOption` が `"custom"` かつ `customInput` に内容がある → `customInput` を採用
    - それ以外 → `selectedLabel` を採用
-3. デフォルトから変更された回答を特に注目して報告
+4. デフォルトから変更された回答を特に注目して報告
 
 ### Step 6: 回答サマリーの提示
 
@@ -171,14 +195,15 @@ open docs/temp/questionnaire.html
 
 **Step 5 の読み取り・Step 6 のサマリー提示が成功した場合のみ実行する。**
 
-Step 2 で保持している質問 JSON と Step 5 の回答を突き合わせ、
+`docs/temp/questionnaire-data.json`（Step 3 で書いた質問 JSON）を Read し、Step 5 の回答と突き合わせ、
 **利用リポジトリのルートに `qa/<slug>-questionnaire.md` を書く**（HVE aqod 形式）。
+会話コンテキストの記憶ではなくこのファイルを正として読むこと（記憶と食い違う場合はファイルが正）。
 
 1. `mkdir -p qa`（利用リポのルート。冪等）
 2. `<slug>` は `title`（無ければ `scope`）の主題を kebab-case にした英字（例: `search-filter-spec`）。ファイル名は `<slug>-questionnaire.md`
 3. 作成日・回答確定日は `date +%Y-%m-%d` で取得（学習データの日付に頼らない）
 4. **質問番号**: 質問は出現順に `Q01` / `Q02` … と**ゼロ埋め2桁で採番**する（HTML 内部の `Q1` 表示や JSON の `id`（`q1`）とは独立。`[Q0x]` ブロックと回答表の `No.` は同じ採番に揃える）
-5. 以下のテンプレートで Write（`{...}` は Step 2 の JSON と回答から埋める。可変長フィールドは全要素を展開する）:
+5. 以下のテンプレートで Write（`{...}` は `docs/temp/questionnaire-data.json` と回答から埋める。可変長フィールドは全要素を展開する）:
 
 ```markdown
 # {title}
@@ -237,12 +262,13 @@ Step 2 で保持している質問 JSON と Step 5 の回答を突き合わせ�
 **Step 7 の永続化が成功した場合のみ実行する:**
 
 ```bash
-rm -f docs/temp/questionnaire.html
+rm -f docs/temp/questionnaire.html docs/temp/questionnaire-data.json
 ```
 
-- 削除するのは**回答用の揮発 HTML のみ**。`qa/<slug>-questionnaire.md` は永続の正として残す。
-- Step 5 で読み取り失敗 (ファイル未 DL・パス違い・JSON パース失敗など) の場合は HTML を残し、ユーザーに再エクスポートを依頼する。再エクスポートの導線 (ブラウザで開いたままの HTML) を守るため。
-- **注意**: `~/Downloads/questionnaire-answers.json` はユーザーのダウンロードフォルダのファイルであるため、自動削除しない。
+- 削除するのは**回答用の揮発 HTML と、その元データ JSON のみ**。`qa/<slug>-questionnaire.md` は永続の正として残す。
+- Step 5 で読み取り失敗 (ファイル未 DL・パス違い・JSON パース失敗など) の場合は両ファイルを残し、ユーザーに再エクスポートを依頼する。再エクスポートの導線 (ブラウザで開いたままの HTML) と、Step 7 に必要な元データを守るため。
+- **注意**: `docs/temp/` は `.gitignore` 対象外である。上記の失敗パスで意図的にファイルを残した場合、質問票には未公開の設計情報が含まれうるため、**コミット・PR 作成の前に必ず削除する**（削除忘れに注意）。
+- **注意**: `~/Downloads/questionnaire-answers-*.json` はユーザーのダウンロードフォルダのファイルであるため、自動削除しない。
 
 ### Step 9: 作業の継続
 

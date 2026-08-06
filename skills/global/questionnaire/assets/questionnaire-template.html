@@ -268,6 +268,18 @@
     transform: translate(-50%, -50%) scale(1);
   }
 
+  .dup-warning {
+    background: #fed7d7;
+    border: 1px solid #fc8181;
+    color: #c53030;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    word-break: break-word;
+  }
+
   @media (max-width: 600px) {
     .header { padding: 20px 16px 16px; }
     .header h1 { font-size: 17px; }
@@ -306,8 +318,14 @@ const PHASE_LABELS = {
 };
 
 const data = QUESTIONS_DATA;
+
+// 内部 state / radio グループのキーは「票全体の出現順」から作る (q.id は使わない)。
+// q.id はカテゴリを跨いだ一意性が保証されないため、キーに使うと重複時に
+// radio グループが共有され、回答が黙って消える。
 const defaultSelections = {};
 const currentSelections = {};
+// key -> { id: 元の q.id, question, category }
+const questionMeta = {};
 
 function init() {
   if (!data || !data.categories || !data.categories.length) {
@@ -324,6 +342,8 @@ function init() {
 
   const container = document.getElementById('questions-container');
   let qIndex = 0;
+  const seenIds = new Set();
+  const duplicateIds = [];
 
   data.categories.forEach(cat => {
     const section = document.createElement('div');
@@ -332,19 +352,26 @@ function init() {
 
     (cat.questions || []).forEach(q => {
       qIndex++;
+      const key = 'k' + qIndex;
+      if (q.id != null) {
+        if (seenIds.has(q.id)) duplicateIds.push(q.id);
+        seenIds.add(q.id);
+      }
+      questionMeta[key] = { id: q.id, question: q.question, category: cat.name };
+
       const opts = q.options || [];
       const defaultOpt = opts.find(o => o.isDefault);
       if (defaultOpt) {
-        defaultSelections[q.id] = defaultOpt.value;
-        currentSelections[q.id] = { value: defaultOpt.value, label: defaultOpt.label, custom: null };
+        defaultSelections[key] = defaultOpt.value;
+        currentSelections[key] = { value: defaultOpt.value, label: defaultOpt.label, custom: null };
       } else {
-        defaultSelections[q.id] = null;
-        currentSelections[q.id] = { value: null, label: '', custom: null };
+        defaultSelections[key] = null;
+        currentSelections[key] = { value: null, label: '', custom: null };
       }
 
       const card = document.createElement('div');
       card.className = 'question-card';
-      card.dataset.qid = q.id;
+      card.dataset.qid = key;
 
       let html = `<span class="q-number">Q${qIndex}</span>`;
       html += `<div class="question-text">${esc(q.question)}</div>`;
@@ -366,13 +393,16 @@ function init() {
       html += `<div class="option-group">`;
 
       opts.forEach((opt, optIdx) => {
-        const checked = opt.isDefault ? 'checked' : '';
-        const selectedClass = opt.isDefault ? ' selected' : '';
+        // isDefault が複数あっても既定値は defaultOpt (先頭) だけ。opt.isDefault で
+        // 判定すると DOM は最後の checked が勝ち、内部 state (先頭) と乖離する。
+        const isTheDefault = opt === defaultOpt;
+        const checked = isTheDefault ? 'checked' : '';
+        const selectedClass = isTheDefault ? ' selected' : '';
         html += `<div class="option-item">`;
         html += `<label class="option-label${selectedClass}" data-optidx="${optIdx}">`;
-        html += `<input type="radio" name="${esc(q.id)}" value="${esc(opt.value)}" ${checked} data-optlabel="${esc(opt.label)}">`;
+        html += `<input type="radio" name="${esc(key)}" value="${esc(opt.value)}" ${checked} data-optlabel="${esc(opt.label)}">`;
         html += `<span>${esc(opt.label)}</span>`;
-        if (opt.isDefault) html += `<span class="default-badge">推奨</span>`;
+        if (isTheDefault) html += `<span class="default-badge">推奨</span>`;
         html += `</label>`;
         if (opt.defaultReason) html += `<div class="default-reason">${esc(opt.defaultReason)}</div>`;
         html += `</div>`;
@@ -380,7 +410,7 @@ function init() {
 
       html += `<div class="option-item">`;
       html += `<div class="custom-input-wrapper" data-custom-wrapper="1">`;
-      html += `<input type="radio" name="${esc(q.id)}" value="__custom__" data-optlabel="">`;
+      html += `<input type="radio" name="${esc(key)}" value="__custom__" data-optlabel="">`;
       html += `<span style="flex-shrink:0;color:#718096;">その他:</span>`;
       html += `<input type="text" class="custom-input" disabled placeholder="自由記述...">`;
       html += `</div>`;
@@ -393,6 +423,18 @@ function init() {
 
     container.appendChild(section);
   });
+
+  // id 重複は回答自体には影響しない (キーは出現順) が、エクスポート JSON の id が
+  // 重複して Step 7 の突き合わせが曖昧になるため、生成元に気付かせる。
+  if (duplicateIds.length) {
+    const warn = document.createElement('div');
+    warn.className = 'dup-warning';
+    warn.textContent =
+      `質問 id が重複しています: ${[...new Set(duplicateIds)].join(', ')} — `
+      + '回答は出現順で管理されるため失われませんが、エクスポート JSON の id が重複します。'
+      + '質問データ側で票全体を通して一意な id を振り直してください。';
+    container.insertBefore(warn, container.firstChild);
+  }
 
   container.addEventListener('change', e => {
     if (e.target.type === 'radio') {
@@ -480,13 +522,6 @@ function updateProgress() {
 }
 
 function exportAnswers() {
-  const allQuestions = {};
-  (data.categories || []).forEach(cat => {
-    (cat.questions || []).forEach(q => {
-      allQuestions[q.id] = { question: q.question, category: cat.name };
-    });
-  });
-
   const emptyCustom = Object.keys(currentSelections).filter(k =>
     currentSelections[k].value === 'custom' && !currentSelections[k].custom
   );
@@ -495,24 +530,25 @@ function exportAnswers() {
     if (!proceed) return;
   }
 
-  const answers = Object.keys(currentSelections).map(qId => {
-    const sel = currentSelections[qId];
-    const qi = allQuestions[qId] || {};
+  const answers = Object.keys(currentSelections).map(key => {
+    const sel = currentSelections[key];
+    const qi = questionMeta[key] || {};
     const isCustom = sel.value === 'custom';
     return {
-      id: qId,
+      id: qi.id,
       category: qi.category || '',
       question: qi.question || '',
       isAnswered: sel.value != null,
       selectedOption: sel.value,
       selectedLabel: isCustom ? '(その他)' : sel.label,
       customInput: isCustom ? (sel.custom == null ? '' : sel.custom) : null,
-      isModified: defaultSelections[qId] !== sel.value
+      isModified: defaultSelections[key] !== sel.value
     };
   });
 
+  const exportedAt = new Date().toISOString();
   const result = {
-    exportedAt: new Date().toISOString(),
+    exportedAt: exportedAt,
     title: data.title,
     phase: data.phase,
     totalQuestions: answers.length,
@@ -521,23 +557,29 @@ function exportAnswers() {
     answers: answers
   };
 
+  // ファイル名にエクスポート時刻を入れて毎回一意にする。固定名だと、既存ファイルが
+  // あるときブラウザが "(1)" 付きで保存し、読み取り側が古い回答を掴んでしまう。
+  const stamp = exportedAt.replace(/[-:]/g, '').replace(/\.\d+Z$/, '').replace('T', '-');
+  const filename = `questionnaire-answers-${stamp}.json`;
+
   const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'questionnaire-answers.json';
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 
-  showToast();
+  showToast(filename);
 }
 
-function showToast() {
+function showToast(filename) {
   const t = document.getElementById('toast');
+  t.textContent = filename ? `エクスポート完了: ${filename}` : 'エクスポート完了';
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2000);
+  setTimeout(() => t.classList.remove('show'), 4000);
 }
 
 document.addEventListener('DOMContentLoaded', init);
