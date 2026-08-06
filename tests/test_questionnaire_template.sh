@@ -10,10 +10,17 @@
 # DOM の実挙動とエクスポート JSON を実ブラウザで検証する。
 #
 # headless Chrome を CDP (DevTools Protocol) で駆動する。npm 依存は使わない
-# (Node 22+ 組み込みの WebSocket / fetch のみ)。node または Chrome が無い環境では
-# SKIP して exit 0 (このリポは公開配布物であり、全環境で Chrome を要求しない)。
+# (Node 22+ 組み込みの WebSocket / fetch のみ)。node または Chrome が無い / 起動
+# できない環境ではブラウザ検証のみ SKIP する (このリポは公開配布物であり、全環境で
+# Chrome を要求しない)。静的検証はブラウザの有無に関わらず必ず実行する。
+#
+# 環境変数:
+#   CHROME=/path/to/chrome  Chrome / Chromium のパスを明示指定する
+#   CHROME_NO_SANDBOX=1     sandbox を無効化して起動する (非 root のコンテナ等)。
+#                           未指定でも、素の起動に失敗したら自動で 1 度リトライする
 #
 # 終了コード: 0 = 全 PASS または SKIP / 1 = 1 件以上 FAIL
+#             (静的検証とブラウザ検証の両方の結果を合成する)
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SKILL_DIR="$REPO_ROOT/skills/global/questionnaire"
@@ -76,30 +83,42 @@ scheck "テンプレートの置換ターゲットがちょうど 1 箇所" "$(
     [ "$n" = "1" ] && echo ok || echo "$n 箇所"
 )"
 
-# SKILL.md Step 3 の契約違反チェックと同じ判定を実行する。手順として書いた検証が
-# 実際に「正常系を通し、違反を弾く」ことを固定する (手順が動かなければ、契約違反が
-# qa/*.md 確定後まで検出されない)。
-validate_data() {
-    python3 - "$1" <<'PY'
-import json, sys
-d = json.load(open(sys.argv[1]))
-qs = [q for c in d.get('categories', []) for q in c.get('questions', [])]
-ids = [q.get('id') for q in qs]
-dup = {i for i in ids if ids.count(i) > 1}
-bad = [q.get('id') for q in qs if sum(1 for o in q.get('options', []) if o.get('isDefault')) != 1]
-vdup = [q.get('id') for q in qs
-        if len({str(o.get('value')) for o in q.get('options', [])}) != len(q.get('options', []))]
-res = [str(o.get('value')) for q in qs for o in q.get('options', [])]
-bad_res = [v for v in res if v in ('custom', '__custom__')]
-if dup: sys.exit(f'id が重複: {sorted(dup)}')
-if bad: sys.exit(f'isDefault が 1 つでない設問: {bad}')
-if vdup: sys.exit(f'value が同一設問内で重複: {vdup}')
-if bad_res: sys.exit(f'value に予約語が使われている: {sorted(set(bad_res))}')
-print(f'OK: {len(qs)} 問')
+# SKILL.md 本文の bash コードブロックを「抽出してそのまま実行」する。
+#
+# ロジックを写したコピーを検証しても意味がない。実際に踏んだ事故は
+# 「heredoc が箇条書き内で字下げされていて終端が閉じない」「変数の代入と参照を
+# 別ブロックに分けたためシェルを跨げない」という *本文の書き方* の問題であり、
+# 複製版では原理的に再現しない。本文そのものを実行して初めて回帰を検出できる。
+extract_block() {
+    # $1: SKILL.md, $2: ブロック先頭行に含まれる目印
+    python3 - "$1" "$2" <<'PY'
+import io, re, sys
+src = io.open(sys.argv[1], encoding='utf-8').read()
+marker = sys.argv[2]
+for m in re.finditer(r'```bash\n(.*?)```', src, re.S):
+    if marker in m.group(1):
+        sys.stdout.write(m.group(1))
+        raise SystemExit(0)
+raise SystemExit(f'ブロックが見つからない: {marker}')
 PY
 }
 
 STEP3_TMP="$(mktemp -d)"
+mkdir -p "$STEP3_TMP/docs/temp"
+
+# Step 3 の契約検証ブロックを本文から抽出 (抽出できること自体が前提条件)
+if extract_block "$SKILL_DIR/SKILL.md" 'JSON の妥当性' > "$STEP3_TMP/step3.sh" 2>/dev/null; then
+    scheck "SKILL.md から Step 3 の検証ブロックを抽出できる" "ok"
+else
+    scheck "SKILL.md から Step 3 の検証ブロックを抽出できる" "抽出に失敗"
+fi
+
+# 本文のブロックは docs/temp/questionnaire-data.json を直接開くので、
+# 一時ディレクトリを cwd にしてケースごとに差し替えて実行する。
+validate_data() {
+    cp "$1" "$STEP3_TMP/docs/temp/questionnaire-data.json"
+    (cd "$STEP3_TMP" && bash step3.sh)
+}
 cat > "$STEP3_TMP/valid.json" <<'JSON'
 {"title":"t","categories":[{"name":"c","questions":[
   {"id":"q1","options":[{"value":"a","isDefault":true},{"value":"b","isDefault":false}]},
@@ -132,19 +151,37 @@ for case in dup_id multi_default dup_value reserved; do
     )"
 done
 
-# SKILL.md Step 5 の鮮度判定 (mtime 比較) が、タイムゾーンに依存せず
-# 新しい回答を fresh・古い回答を stale と判定することを固定する。
-touch "$STEP3_TMP/questionnaire.html"
-sleep 1
-touch "$STEP3_TMP/fresh.json"
-touch -t 202001010000 "$STEP3_TMP/old.json"
-scheck "Step 5 の鮮度判定: 新しい回答を fresh と判定" "$(
-    [ "$STEP3_TMP/fresh.json" -nt "$STEP3_TMP/questionnaire.html" ] && echo ok || echo "fresh を stale と誤判定"
-)"
-scheck "Step 5 の鮮度判定: 古い回答を stale と判定" "$(
-    [ "$STEP3_TMP/old.json" -nt "$STEP3_TMP/questionnaire.html" ] && echo "stale を fresh と誤判定" || echo ok
-)"
-rm -rf "$STEP3_TMP"
+# SKILL.md Step 5 のファイル特定 + 鮮度判定ブロックも本文から抽出して実行する。
+# ダウンロード先だけ一時ディレクトリに差し替え、notfound / fresh / stale の
+# 3 分岐が本文の説明どおりに出ることを固定する (タイムゾーンに依存しないこと込み)。
+STEP5_TMP="$(mktemp -d)"
+mkdir -p "$STEP5_TMP/docs/temp"
+if extract_block "$SKILL_DIR/SKILL.md" 'ファイル特定と鮮度判定' > "$STEP5_TMP/step5.raw" 2>/dev/null; then
+    scheck "SKILL.md から Step 5 の鮮度判定ブロックを抽出できる" "ok"
+    sed 's#~/Downloads#.#' "$STEP5_TMP/step5.raw" > "$STEP5_TMP/step5.sh"
+    touch "$STEP5_TMP/docs/temp/questionnaire.html"
+
+    scheck "Step 5: 回答ファイルが無いとき notfound" "$(
+        out=$(cd "$STEP5_TMP" && bash step5.sh)
+        [ "$out" = "notfound" ] && echo ok || echo "出力=$out"
+    )"
+
+    sleep 1
+    touch "$STEP5_TMP/questionnaire-answers-20260101-000000.json"
+    scheck "Step 5: HTML より新しい回答を fresh と判定" "$(
+        out=$(cd "$STEP5_TMP" && bash step5.sh)
+        [ "${out#fresh:}" != "$out" ] && echo ok || echo "出力=$out"
+    )"
+
+    touch -t 202001010000 "$STEP5_TMP/questionnaire-answers-20260101-000000.json"
+    scheck "Step 5: HTML より古い回答を stale と判定" "$(
+        out=$(cd "$STEP5_TMP" && bash step5.sh)
+        [ "${out#stale:}" != "$out" ] && echo ok || echo "出力=$out"
+    )"
+else
+    scheck "SKILL.md から Step 5 の鮮度判定ブロックを抽出できる" "抽出に失敗"
+fi
+rm -rf "$STEP3_TMP" "$STEP5_TMP"
 
 # --- 前提コマンドの解決 (無ければブラウザ部分のみ SKIP) ---
 skip_browser() {
@@ -336,39 +373,60 @@ writeFileSync(filled, tpl.replace(PLACEHOLDER, `const QUESTIONS_DATA = ${JSON.st
 writeFileSync(pristine, tpl);
 writeFileSync(edge, tpl.replace(PLACEHOLDER, `const QUESTIONS_DATA = ${JSON.stringify(SAMPLE_EDGE)};`));
 
-const PROFILE = join(WORK, 'profile');
-// sandbox の無効化は、実際に必要な環境 (root 実行やコンテナ) に限る。
-// sandbox が正常に働く開発者マシンでまで一律に緩めない。
-const SANDBOX_ARGS = (process.getuid && process.getuid() === 0) || process.env.CHROME_NO_SANDBOX
-  ? ['--no-sandbox', '--disable-dev-shm-usage']
-  : [];
-const chrome = spawn(CHROME, [
-  '--headless=new',
-  '--remote-debugging-port=0',
-  `--user-data-dir=${PROFILE}`,
-  '--no-first-run',
-  '--no-default-browser-check',
-  '--allow-file-access-from-files',
-  ...SANDBOX_ARGS,
-  'about:blank',
-], { stdio: 'ignore' });
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function waitForChrome() {
-  const portFile = join(PROFILE, 'DevToolsActivePort');
-  for (let i = 0; i < 60; i++) {
+// sandbox の無効化は、実際に必要な環境に限る。sandbox が正常に働く開発者マシンで
+// まで一律に緩めない。ただし非 root のコンテナ等では素の起動が失敗するため、
+// 失敗したら --no-sandbox で 1 度だけリトライし、それでも駄目なら SKIP に落とす
+// (公開配布物として「Chrome が使えない環境は SKIP」という設計を守る)。
+let chrome = null;
+let profileSeq = 0;
+
+async function launchChrome(noSandbox) {
+  const profile = join(WORK, `profile-${++profileSeq}`);
+  const proc = spawn(CHROME, [
+    '--headless=new',
+    '--remote-debugging-port=0',
+    `--user-data-dir=${profile}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    ...(noSandbox ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
+    'about:blank',
+  ], { stdio: 'ignore' });
+
+  let exited = false;
+  proc.on('exit', () => { exited = true; });
+
+  const portFile = join(profile, 'DevToolsActivePort');
+  for (let i = 0; i < 40; i++) {
+    if (exited) break;
     if (existsSync(portFile)) {
       const p = Number(readFileSync(portFile, 'utf8').split('\n')[0]);
       if (Number.isInteger(p) && p > 0) {
         try {
-          if ((await fetch(`http://127.0.0.1:${p}/json/version`)).ok) { PORT = p; return; }
+          if ((await fetch(`http://127.0.0.1:${p}/json/version`)).ok) {
+            PORT = p;
+            chrome = proc;
+            return true;
+          }
         } catch { /* 起動途中 */ }
       }
     }
     await sleep(250);
   }
-  throw new Error('Chrome の CDP エンドポイントに接続できない');
+  proc.kill();
+  return false;
+}
+
+async function startChrome() {
+  const wantNoSandbox = !!process.env.CHROME_NO_SANDBOX
+    || (process.getuid && process.getuid() === 0);
+  if (await launchChrome(wantNoSandbox)) return true;
+  if (!wantNoSandbox) {
+    console.log('[INFO] 素の起動に失敗したため --no-sandbox でリトライする');
+    if (await launchChrome(true)) return true;
+  }
+  return false;
 }
 
 class Session {
@@ -431,16 +489,23 @@ async function newPage(fileUrl) {
   await s.send('Runtime.enable');
   await s.send('Page.enable');
   await s.send('Page.navigate', { url: fileUrl });
+  // about:blank も readyState は complete なので、遷移先の URL も併せて確認する
   for (let i = 0; i < 40; i++) {
-    if (await s.eval('document.readyState === "complete"')) break;
+    if (await s.eval(`document.readyState === "complete" && location.href !== "about:blank"`)) break;
     await sleep(150);
   }
   await sleep(200);
   return { s, errors };
 }
 
+let browserSkipped = false;
 try {
-  await waitForChrome();
+  if (!await startChrome()) {
+    console.log('[SKIP] Chrome を起動できないためブラウザ検証を実施しない');
+    console.log('       (CHROME_NO_SANDBOX=1 で sandbox 無効化を明示できる)');
+    browserSkipped = true;
+    process.exit(2);
+  }
 
   // --- 未設定テンプレート: フォールバック ---
   {
@@ -602,6 +667,22 @@ try {
         return card.querySelectorAll('.default-badge').length === 1;
       })()`)) === true);
 
+    // まず未操作のままエクスポートし、init 側の値が文字列に正規化されていることを
+    // 固定する (クリック後は radio.value 経由で必ず文字列になるため、クリック前で
+    // ないと「未操作時は生の値のまま」という回帰を検出できない)。
+    await e.eval(`(() => {
+      URL.createObjectURL = (b) => { window.__blob = b; return 'blob:stub'; };
+      HTMLAnchorElement.prototype.click = function () { window.__downloadName = this.download; };
+    })()`);
+    await e.eval('document.getElementById("btn-export").click()');
+    await sleep(200);
+    const untouched = JSON.parse(await e.eval('window.__blob.text()', true));
+    const uNum = untouched.answers[4];
+    check('未操作でも数値 value の selectedOption が文字列に正規化される',
+      typeof uNum.selectedOption === 'string' && uNum.selectedOption === '1'
+        && uNum.selectedLabel === 'N-1' && uNum.isModified === false,
+      JSON.stringify(uNum));
+
     // value 重複 / 数値 value でも「選んだ選択肢」が正しく記録されること。
     // value 文字列で同一性を判定すると、前者は isModified が立たず、後者は
     // 既定値をクリックしただけで isModified が立ち、いずれも誤記録になる。
@@ -617,10 +698,6 @@ try {
       (await e.eval('document.querySelectorAll(".question-card")[4].classList.contains("modified")')) === false);
 
     // 表示 (DOM) と内部 state の一致: 未操作の multi 設問が「既定値のまま」で出ること
-    await e.eval(`(() => {
-      URL.createObjectURL = (b) => { window.__blob = b; return 'blob:stub'; };
-      HTMLAnchorElement.prototype.click = function () { window.__downloadName = this.download; };
-    })()`);
     await e.eval('document.getElementById("btn-export").click()');
     await sleep(200);
     const edgeExport = JSON.parse(await e.eval('window.__blob.text()', true));
@@ -722,7 +799,7 @@ try {
     ng.close();
   }
 } finally {
-  chrome.kill();
+  if (chrome) chrome.kill();
 }
 
 const failed = results.filter((ok) => !ok).length;
@@ -734,9 +811,20 @@ NODE_STATUS=$?
 # 静的検証とブラウザ検証の両方を終了コードに反映する。
 # node の終了コードだけを返すと、静的検証 (skill の登録状態) が FAIL しても
 # Chrome のある環境では exit 0 になり、登録の回帰が黙って素通りする。
+# exit 2 は「Chrome を起動できず SKIP」で、FAIL とは区別する。
 echo ""
-echo "=== 静的検証: $STATIC_FAIL failed / ブラウザ検証: exit $NODE_STATUS ==="
-if [ "$NODE_STATUS" -ne 0 ] || [ "$STATIC_FAIL" -ne 0 ]; then
+if [ "$NODE_STATUS" -eq 2 ]; then
+    echo "=== 静的検証: $STATIC_FAIL failed / ブラウザ検証: SKIP ==="
+elif [ "$NODE_STATUS" -eq 0 ]; then
+    echo "=== 静的検証: $STATIC_FAIL failed / ブラウザ検証: 全 PASS ==="
+else
+    echo "=== 静的検証: $STATIC_FAIL failed / ブラウザ検証: FAIL ==="
+fi
+
+if [ "$STATIC_FAIL" -ne 0 ]; then
+    exit 1
+fi
+if [ "$NODE_STATUS" -ne 0 ] && [ "$NODE_STATUS" -ne 2 ]; then
     exit 1
 fi
 exit 0
