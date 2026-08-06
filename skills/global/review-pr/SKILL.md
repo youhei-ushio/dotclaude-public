@@ -275,6 +275,13 @@ else:
 共通のフォーマットにすることで、所有権判定が確実になる。sidecar 方式
 なので PR 本文には一切影響しない (HTML コメントすら残らない)。
 
+**`gh pr view` の取得は必ず成否を確認する**: 失敗 (認証切れ / ネットワーク /
+API エラー) するとリダイレクトで空ファイルができ、Step 0.4 の
+`BROWSER_TEST_DONE` 判定が「未実施」に倒れるうえ、Step 4.5 の
+`gh pr edit --body-file` が **PR 本文を空で上書きする**。空ファイルを
+そのまま使わず、失敗したらリトライするか、解消できなければ skill を停止
+してユーザーに報告する。
+
 `OWNED_BODY_FILE` フラグは Step 8 のクリーンアップ判定でのみ使う。
 Step 4.5 のファイル編集ロジックは両経路で共通。Step 8 では
 `OWNED_BODY_FILE=True` のとき `docs/temp/pr-body.md` と sidecar
@@ -306,21 +313,23 @@ if MODE == "review-only":
 else:
     # fix モード: create-pr Step 3 がブラウザテストを実施すると PR 本文の
     # Test plan に「- [x] ブラウザテスト: ... OK」の 1 行が残る (create-pr
-    # Step 3 の項番 6 の規約)。この **テキスト証跡** の有無で初回実施済かを
-    # 判定する。
+    # Step 3「証跡はコミットせず、テキスト 1 行で記録する」項の規約)。この
+    # **テキスト証跡** の有無で初回実施済かを判定する。
     # - スクリーンショットは PR に掲載しない方針なので、判定キーを画像セクション
     #   ではなくテキスト 1 行に置く (リポジトリを肥大化させずに証跡を残せる)
-    # - skip された Step 3 は `- [ ] ブラウザテスト: skip (...)` を残す規約なので
-    #   実施済と誤認しない (`[x]` のみをマッチさせる)
-    # - 取得と判定を分離し、gh の失敗 (認証切れ / ネットワーク / API エラー) を
-    #   「未実施」と誤認しないよう明示エラーで止める。1 本のパイプで書くと
-    #   pipefail 下で `grep -q` の早期終了が gh を SIGPIPE (141) で落として
-    #   True→False に反転する事故もある
-    PR_BODY=$(gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body)
-    if [ $? -ne 0 ]:
-        ESCALATE_REASON = "pr-fetch-failed"; 中断して Step 7 へ
-    BROWSER_TEST_DONE=$(printf '%s\n' "$PR_BODY" \
-                        | grep -qE '^- \[x\] ブラウザテスト:' && echo True || echo False)
+    # - Step 3 を skip した場合は `- [ ] ブラウザテスト: skip (...)` を残す規約
+    #   なので、`[x]` のみをマッチさせて skip を実施済と誤認しない
+    # - 判定材料は Step 0.3 が用意した docs/temp/pr-body.md を読むだけにする。
+    #   gh を再度呼ばないので「取得失敗を False (= 未実施) と誤認する」経路が
+    #   そもそも生まれない (取得の成否は Step 0.3 で確認済み)
+    # - パイプを使わない。`gh ... | grep -q` の形は pipefail 下で grep -q の
+    #   早期終了が上流を SIGPIPE (141) で落とし、一致しているのに False へ
+    #   反転しうる
+    # - 人が手編集した本文も拾えるよう、行頭インデント / `[X]` / 全角コロンを許容
+    if grep -qE '^[[:space:]]*- \[[xX]\] ブラウザテスト[:：]' docs/temp/pr-body.md:
+        BROWSER_TEST_DONE = True
+    else:
+        BROWSER_TEST_DONE = False
 REBASED_THIS_ITERATION = False   # Step 1 で毎巡先頭に再代入されるが、全 MODE 共通
                                   # 変数として未定義参照リスクの根絶のため init
 ```
@@ -809,6 +818,11 @@ else:
 - escalate 直行経路で commit 無しの場合: `### N 巡目 (commit なし、escalate
   中断 / 理由: $ESCALATE_REASON)`
 - Test plan のチェック状態も最新化 (完了項目は `[x]`)
+- **例外: `- [x] ブラウザテスト:` / `- [ ] ブラウザテスト: skip (...)` の行は
+  原文のまま保持する**。この行は Step 0.4 の `BROWSER_TEST_DONE` 判定キーなので、
+  削除・書式変更したり skip の `[ ]` を「未完了だから最新化」で `[x]` に
+  反転させたりしてはならない (前者は Step 5 の再走査が二度と走らなくなり、
+  後者は dev server が起動できなかった PR で再走査を試みる)
 
 ```bash
 gh pr edit "$N" --repo "$OWNER_REPO" --body-file docs/temp/pr-body.md

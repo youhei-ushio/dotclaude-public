@@ -110,7 +110,8 @@ rebase 後の push は Step 4 で `--force-with-lease` を使う。
 
 以下のいずれかに該当すれば **必ず実施** (判定の skip は禁止):
 
-1. **test plan / PR 本文素案にブラウザ系キーワード**: `ブラウザ` / `画面` / `UI` / `Playwright` / `画面遷移` / `ボタン` / `表示` (使用フレームワーク名があれば併せて加える)
+1. **test plan / PR 本文素案にブラウザ系キーワード**: `ブラウザ` / `画面` / `UI` / `Playwright` / `画面遷移` / `ボタン` / `表示` / `印刷` / `帳票` (使用フレームワーク名があれば併せて加える)
+   - `印刷` / `帳票` が該当する場合は、通常画面に加えて **印刷プレビュー (`browser_evaluate` で `window.print()` 相当 / 印刷用 CSS の適用状態) も目視対象に含める**
 2. **diff に画面ファイル**: ビュー / フロントエンドコンポーネントの変更
    - 例 (自プロジェクトの構成に読み替え): `*.vue`, `*.tsx`, `*.jsx`, `*.svelte`, `resources/views/**`, `resources/js/**`, `src/**` のコンポーネント、テンプレートエンジンのビューファイル等
 
@@ -124,7 +125,7 @@ git diff --name-only "$BASE"...HEAD | grep -E '\.(vue|tsx|jsx|svelte)$|^(resourc
 #### 実行
 
 1. **dev server 起動確認**: プロジェクト固有の起動コマンドは CLAUDE.md / `.env` / `docker-compose.yml` / `package.json` 等を確認して判断。停止していたら起動する
-   - 起動コマンドが特定できない / 3 回試行しても URL に到達できない場合は、**Step 3 全体を skip し、その旨を Step 7 の最終報告で明示**。skill 全体は escalate せず通常フローを継続
+   - 起動コマンドが特定できない / 3 回試行しても URL に到達できない場合は、**Step 3 全体を skip し、その旨を Step 7 の最終報告で明示**。skill 全体は escalate せず通常フローを継続。あわせて Step 5 の本文で Test plan に `- [ ] ブラウザテスト: skip (<理由>)` を残す (項番 6 参照)
 2. **URL 推測 → 検証**: test plan 項目 + 変更画面 (ルーティング定義から逆引き) で `mcp__playwright__browser_navigate`
 3. **操作・検証**: 必要に応じて `mcp__playwright__browser_click` / `browser_type` / `browser_snapshot`
 4. **テストデータ作成も OK**: 検証に必要ならプロジェクトの seeder / factory / 直接 DB 投入で作成して良い。**ただし本番系 / 破壊的操作 (truncate / drop / DB 全リセット等) は禁止**
@@ -141,10 +142,16 @@ git diff --name-only "$BASE"...HEAD | grep -E '\.(vue|tsx|jsx|svelte)$|^(resourc
      - [x] ブラウザテスト: <検証したケース> OK (スクリーンショットは非掲載)
      ```
 
-     この行は `review-pr` Step 5 のブラウザテスト再走査が「初回実施済か」の判定
-     キーに使うため、**書式を崩さない** (行頭 `- [x] ブラウザテスト:`)
-   - Step 3 全体を skip した場合はこの行を書かず、代わりに
-     `- [ ] ブラウザテスト: skip (<理由>)` を残す (skip を実施済と誤認させない)
+     この行は `review-pr` Step 0.4 が「初回実施済か」の判定キーに使い、Step 5 の
+     ブラウザテスト再走査を起動するかを決めるため、**書式を崩さない**
+     (行頭 `- [x] ブラウザテスト:`)。印刷プレビューも確認した場合は
+     `<検証したケース>` にその旨を含める
+   - **記録の有無は 3 通りに分ける** (Step 5 の本文作成時に反映する):
+     - 実施して全成功: `- [x] ブラウザテスト: <検証したケース> OK (スクリーンショットは非掲載)`
+     - Step 3 に入ったが skip (項番 1 の dev server 起動不可等):
+       `- [ ] ブラウザテスト: skip (<理由>)` — 未チェックのままにして実施済と誤認させない
+     - 上記「実施判定」が false で Step 3 に入らなかった: **行そのものを書かない**
+       (書くと人間のレビュアーには未完タスクに見えるため)
 
 ### Step 4: リモートへプッシュ
 
@@ -188,10 +195,14 @@ rm docs/temp/pr-body.md  # クリーンアップは Step 8
 #### PR 本文フォーマット
 
 - タイトルは 70 文字以内
-- **スクリーンショットは PR に掲載しない** (Issue 対応か否かを問わず全 PR 共通):
+- **検証スクリーンショットは PR に掲載しない** (Issue 対応か否かを問わず全 PR 共通):
   `docs/images/` へのコミットや `?raw=true` 形式での引用は行わない（対応のたびに
   `docs/images/` が肥大化するため廃止）。画面確認は Step 3 のブラウザテストで
-  実施し、結果は Test plan にテキスト 1 行で記録する（Step 3 の項番 6）
+  実施し、結果は Test plan にテキスト 1 行で記録する（Step 3「証跡はコミットせず、
+  テキスト 1 行で記録する」項）
+  - **対象外**: `create-manual` が作る顧客向けマニュアル本体の埋め込み画像
+    （`docs/images/issue-<number>/*.png` を `?raw=true` で参照）は、検証証跡では
+    なく成果物そのものなので従来どおりコミットする
 
 ##### 基本フォーマット
 
@@ -201,9 +212,15 @@ rm docs/temp/pr-body.md  # クリーンアップは Step 8
 
 ## Test plan
 - [ ] テスト項目
+- [x] ブラウザテスト: <検証したケース> OK (スクリーンショットは非掲載)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
+
+最後の 1 行は **Step 3 でブラウザテストを実施した場合のみ** 入れる。Step 3 に
+入ったが skip した場合は `- [ ] ブラウザテスト: skip (<理由>)` に置き換え、
+Step 3 の実施判定が false で入らなかった場合は行ごと省く。
+`review-pr` Step 0.4 がこの行を判定キーに使うので書式を崩さない。
 
 ##### Issue 対応時の追加ルール
 
@@ -223,7 +240,8 @@ rm docs/temp/pr-body.md  # クリーンアップは Step 8
 （Step 6 セルフレビュー実施後、毎巡 Step 6.4.5 で追加・更新する。実施前は省略）
 
 ## Test plan
-- テスト内容
+- [ ] テスト内容
+- [x] ブラウザテスト: <検証したケース> OK (スクリーンショットは非掲載)
 
 Closes #<issue 番号>
 
@@ -519,6 +537,9 @@ while iteration <= 5:
       - 「対応履歴」セクションを追加または更新し、今巡の auto-fix / escalate /
         silent-reject の件数と主な内訳を 3-5 行で要約
       - Test plan のチェック状態も最新化 (完了項目は [x])
+      - 例外: 「- [x] ブラウザテスト:」「- [ ] ブラウザテスト: skip (...)」の行は
+        原文のまま保持する (review-pr Step 0.4 の判定キー。削除・書式変更や
+        skip の [ ] → [x] 反転をしない)
     gh pr edit {N} --body-file docs/temp/pr-body.md
     rm docs/temp/pr-body.md
 
@@ -535,7 +556,7 @@ while iteration <= 5:
         全ケースを再走査
         失敗したら escalate して Step 7 に進む
     # 以下は完全 skip (= 正常な終了パス、escalate しない):
-    # - Step 3 を未実施だった PR (画面変更なし判定)
+    # - Step 3 を実施しなかった PR (実施判定が false / dev server 起動不可で skip)
     # - 今巡の auto-fix が typo / import 整理など UI に無関係なもののみ
 
     iteration += 1
