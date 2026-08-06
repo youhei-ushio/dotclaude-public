@@ -361,13 +361,15 @@ function init() {
 
       const opts = q.options || [];
       const defaultOpt = opts.find(o => o.isDefault);
-      if (defaultOpt) {
-        defaultSelections[key] = defaultOpt.value;
-        currentSelections[key] = { value: defaultOpt.value, label: defaultOpt.label, custom: null };
-      } else {
-        defaultSelections[key] = null;
-        currentSelections[key] = { value: null, label: '', custom: null };
-      }
+      // 選択の同一性は opt.value ではなく「選択肢の出現順」で判定する。value での
+      // 比較は (a) value が数値だと radio.value (常に文字列) と型が食い違い、既定値を
+      // あえてクリックしただけで isModified が立つ、(b) 同一設問内に同じ value が
+      // 2 つあると別の選択肢を選んでも isModified が立たない、という誤記録を生む。
+      const defaultIdx = defaultOpt ? String(opts.indexOf(defaultOpt)) : null;
+      defaultSelections[key] = defaultIdx;
+      currentSelections[key] = defaultOpt
+        ? { optKey: defaultIdx, value: defaultOpt.value, label: defaultOpt.label, custom: null }
+        : { optKey: null, value: null, label: '', custom: null };
 
       const card = document.createElement('div');
       card.className = 'question-card';
@@ -400,7 +402,7 @@ function init() {
         const selectedClass = isTheDefault ? ' selected' : '';
         html += `<div class="option-item">`;
         html += `<label class="option-label${selectedClass}" data-optidx="${optIdx}">`;
-        html += `<input type="radio" name="${esc(key)}" value="${esc(opt.value)}" ${checked} data-optlabel="${esc(opt.label)}">`;
+        html += `<input type="radio" name="${esc(key)}" value="${esc(opt.value)}" ${checked} data-optidx="${optIdx}" data-optlabel="${esc(opt.label)}">`;
         html += `<span>${esc(opt.label)}</span>`;
         if (isTheDefault) html += `<span class="default-badge">推奨</span>`;
         html += `</label>`;
@@ -466,8 +468,8 @@ function onSelect(radio) {
   if (!card) return;
   const qId = card.dataset.qid;
   const customInput = card.querySelector('.custom-input');
-  const isCustom = radio.value === '__custom__';
-  const value = isCustom ? 'custom' : radio.value;
+  const isCustom = radio.dataset.optidx === undefined;
+  const optKey = isCustom ? '__custom__' : radio.dataset.optidx;
   const label = radio.dataset.optlabel || '';
 
   card.querySelectorAll('.option-label, .custom-input-wrapper').forEach(el => el.classList.remove('selected'));
@@ -479,15 +481,15 @@ function onSelect(radio) {
       customInput.disabled = false;
       customInput.focus();
     }
-    currentSelections[qId] = { value: 'custom', label: '', custom: customInput ? customInput.value : '' };
+    currentSelections[qId] = { optKey: optKey, value: 'custom', label: '', custom: customInput ? customInput.value : '' };
   } else {
     const labelEl = radio.closest('.option-label');
     if (labelEl) labelEl.classList.add('selected');
     if (customInput) customInput.disabled = true;
-    currentSelections[qId] = { value: value, label: label, custom: null };
+    currentSelections[qId] = { optKey: optKey, value: radio.value, label: label, custom: null };
   }
 
-  if (defaultSelections[qId] !== value) {
+  if (defaultSelections[qId] !== optKey) {
     card.classList.add('modified');
   } else {
     card.classList.remove('modified');
@@ -500,7 +502,7 @@ function onCustomInput(inputEl) {
   const card = inputEl.closest('.question-card');
   if (!card) return;
   const qId = card.dataset.qid;
-  if (currentSelections[qId] && currentSelections[qId].value === 'custom') {
+  if (currentSelections[qId] && currentSelections[qId].optKey === '__custom__') {
     currentSelections[qId].custom = inputEl.value;
   }
 }
@@ -508,8 +510,8 @@ function onCustomInput(inputEl) {
 function updateProgress() {
   const qIds = Object.keys(defaultSelections);
   const total = qIds.length;
-  const unanswered = qIds.filter(k => !currentSelections[k] || currentSelections[k].value == null).length;
-  const modified = qIds.filter(k => currentSelections[k] && currentSelections[k].value !== defaultSelections[k]).length;
+  const unanswered = qIds.filter(k => !currentSelections[k] || currentSelections[k].optKey == null).length;
+  const modified = qIds.filter(k => currentSelections[k] && currentSelections[k].optKey !== defaultSelections[k]).length;
   const pct = total > 0 ? Math.round((modified / total) * 100) : 0;
 
   document.getElementById('progress-bar').style.width = pct + '%';
@@ -523,26 +525,30 @@ function updateProgress() {
 
 function exportAnswers() {
   const emptyCustom = Object.keys(currentSelections).filter(k =>
-    currentSelections[k].value === 'custom' && !currentSelections[k].custom
+    currentSelections[k].optKey === '__custom__' && !currentSelections[k].custom
   );
   if (emptyCustom.length > 0) {
     const proceed = confirm(`「その他」を選択した ${emptyCustom.length} 問で自由記述が空です。このまま出力しますか？`);
     if (!proceed) return;
   }
 
-  const answers = Object.keys(currentSelections).map(key => {
+  // answers[] は質問の出現順で並ぶ。index (1 始まり) がその順序であり、
+  // Step 7 の突き合わせキーはこの index。id は票データ側の値をそのまま返す参考情報で、
+  // 一意性が保証されないため突き合わせには使わない。
+  const answers = Object.keys(currentSelections).map((key, i) => {
     const sel = currentSelections[key];
     const qi = questionMeta[key] || {};
-    const isCustom = sel.value === 'custom';
+    const isCustom = sel.optKey === '__custom__';
     return {
-      id: qi.id,
+      index: i + 1,
+      id: qi.id == null ? null : qi.id,
       category: qi.category || '',
       question: qi.question || '',
-      isAnswered: sel.value != null,
-      selectedOption: sel.value,
+      isAnswered: sel.optKey != null,
+      selectedOption: isCustom ? 'custom' : sel.value,
       selectedLabel: isCustom ? '(その他)' : sel.label,
       customInput: isCustom ? (sel.custom == null ? '' : sel.custom) : null,
-      isModified: defaultSelections[key] !== sel.value
+      isModified: defaultSelections[key] !== sel.optKey
     };
   });
 
@@ -559,7 +565,12 @@ function exportAnswers() {
 
   // ファイル名にエクスポート時刻を入れて毎回一意にする。固定名だと、既存ファイルが
   // あるときブラウザが "(1)" 付きで保存し、読み取り側が古い回答を掴んでしまう。
-  const stamp = exportedAt.replace(/[-:]/g, '').replace(/\.\d+Z$/, '').replace('T', '-');
+  // スタンプは利用者が見て分かるよう「ローカル時刻」で作る (exportedAt は UTC の
+  // ISO8601 なので、そのまま使うと JST では日付が前日になり混乱する)。
+  const d = new Date();
+  const p2 = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`
+    + `-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
   const filename = `questionnaire-answers-${stamp}.json`;
 
   const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
@@ -577,7 +588,7 @@ function exportAnswers() {
 
 function showToast(filename) {
   const t = document.getElementById('toast');
-  t.textContent = filename ? `エクスポート完了: ${filename}` : 'エクスポート完了';
+  t.textContent = `エクスポート完了: ${filename}`;
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 4000);
 }

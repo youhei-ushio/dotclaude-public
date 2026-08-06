@@ -16,23 +16,81 @@
 # 終了コード: 0 = 全 PASS または SKIP / 1 = 1 件以上 FAIL
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TEMPLATE="$REPO_ROOT/skills/global/questionnaire/assets/questionnaire-template.html"
+SKILL_DIR="$REPO_ROOT/skills/global/questionnaire"
+TEMPLATE="$SKILL_DIR/assets/questionnaire-template.html"
 
 if [ ! -f "$TEMPLATE" ]; then
     echo "[FAIL] テンプレートが見つからない: $TEMPLATE"
     exit 1
 fi
 
-# --- 前提コマンドの解決 (無ければ SKIP) ---
+# ============================================================================
+# 静的検証 (ブラウザ不要 — SKIP ゲートより前に必ず実行する)
+#
+# skill の登録 (frontmatter / settings.json) が壊れると auto-load や
+# 実行許可が黙って効かなくなる。このリポの既知の致命事故もこの系統なので、
+# Chrome の無い環境でも必ず検証されるようにここに置く。
+# ============================================================================
+STATIC_FAIL=0
+scheck() {
+    if [ "$2" = "ok" ]; then
+        echo "[PASS] $1"
+    else
+        echo "[FAIL] $1  -- $2"
+        STATIC_FAIL=$((STATIC_FAIL + 1))
+    fi
+}
+
+scheck "SKILL.md の frontmatter name がディレクトリ名と一致" "$(
+    python3 - "$SKILL_DIR/SKILL.md" <<'PY'
+import io, sys
+src = io.open(sys.argv[1], encoding='utf-8').read()
+if not src.startswith('---\n'):
+    print('frontmatter が --- で始まっていない'); raise SystemExit
+fm = src.split('---\n', 2)[1]
+names = [l.split(':', 1)[1].strip() for l in fm.splitlines() if l.startswith('name:')]
+if names != ['questionnaire']:
+    print(f'name が questionnaire でない: {names}'); raise SystemExit
+if not any(l.startswith('description:') for l in fm.splitlines()):
+    print('description が無い'); raise SystemExit
+print('ok')
+PY
+)"
+
+scheck "settings.json が妥当な JSON で Skill(questionnaire) を許可" "$(
+    python3 - "$REPO_ROOT/settings.json" <<'PY'
+import io, json, sys
+try:
+    d = json.loads(io.open(sys.argv[1], encoding='utf-8').read())
+except Exception as e:
+    print(f'JSON パース失敗: {e}'); raise SystemExit
+allow = d.get('permissions', {}).get('allow', [])
+if allow.count('Skill(questionnaire)') != 1:
+    print(f'Skill(questionnaire) が 1 件でない: {allow.count("Skill(questionnaire)")}'); raise SystemExit
+print('ok')
+PY
+)"
+
+scheck "テンプレートの置換ターゲットがちょうど 1 箇所" "$(
+    n=$(grep -c '^const QUESTIONS_DATA = \[\];$' "$TEMPLATE")
+    [ "$n" = "1" ] && echo ok || echo "$n 箇所"
+)"
+
+# --- 前提コマンドの解決 (無ければブラウザ部分のみ SKIP) ---
+skip_browser() {
+    echo "[SKIP] $1"
+    echo ""
+    echo "=== 静的検証のみ実施: $STATIC_FAIL failed ==="
+    exit $([ "$STATIC_FAIL" -eq 0 ] && echo 0 || echo 1)
+}
+
 if ! command -v node >/dev/null 2>&1; then
-    echo "[SKIP] node が無いため headless ブラウザテストを実施しない"
-    exit 0
+    skip_browser "node が無いため headless ブラウザテストを実施しない"
 fi
 
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
 if [ "$NODE_MAJOR" -lt 22 ]; then
-    echo "[SKIP] node ${NODE_MAJOR}.x では組み込み WebSocket が使えない (要 22+)"
-    exit 0
+    skip_browser "node ${NODE_MAJOR}.x では組み込み WebSocket が使えない (要 22+)"
 fi
 
 # CHROME 環境変数で明示指定可。未指定なら既知のパスを順に探す。
@@ -54,24 +112,24 @@ fi
 
 # 明示指定された CHROME が実行不能な場合もここで SKIP に落とす
 if [ -z "$CHROME" ] || [ ! -x "$CHROME" ]; then
-    echo "[SKIP] Chrome / Chromium が見つからないため headless ブラウザテストを実施しない"
-    echo "       (CHROME=/path/to/chrome bash tests/test_questionnaire_template.sh で明示指定可)"
-    exit 0
+    skip_browser "Chrome / Chromium が見つからないため headless ブラウザテストを実施しない (CHROME=/path/to/chrome で明示指定可)"
 fi
 
-CDP_PORT="${CDP_PORT:-9333}"
 WORK="$(mktemp -d)"
 # Chrome の終了直後はプロファイルへの書き込みが残っていて rm が競合するため、
 # 少し待ってから消し、それでも残るケースは無視する (一時ディレクトリなので実害なし)。
 trap 'sleep 0.5; rm -rf "$WORK" 2>/dev/null' EXIT
 
-TEMPLATE="$TEMPLATE" WORK="$WORK" CHROME="$CHROME" CDP_PORT="$CDP_PORT" node --input-type=module <<'NODE_EOF'
+TEMPLATE="$TEMPLATE" WORK="$WORK" CHROME="$CHROME" node --input-type=module <<'NODE_EOF'
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-const { TEMPLATE, WORK, CHROME, CDP_PORT } = process.env;
-const PORT = Number(CDP_PORT);
+const { TEMPLATE, WORK, CHROME } = process.env;
+// ポートは Chrome に自動割当させ、DevToolsActivePort から実ポートを読む。
+// 固定ポートだと、既に remote-debugging で起動しているユーザーの Chrome に
+// 接続してタブを開き、そちらのページを書き換えてしまう。
+let PORT = 0;
 
 // 検証用のサンプル票。既定値のまま / 別選択肢 / その他 の 3 パターンと、
 // カテゴリ跨ぎの連番・メタ表示・XSS を 1 票で網羅する。
@@ -163,6 +221,30 @@ const SAMPLE_EDGE = {
             { value: 'b', label: 'M-2', isDefault: true, defaultReason: null },
           ],
         },
+        {
+          id: 'samevalue',
+          question: '同じ value の選択肢がある設問',
+          options: [
+            { value: 'same', label: 'S-1', isDefault: true, defaultReason: null },
+            { value: 'same', label: 'S-2', isDefault: false, defaultReason: null },
+          ],
+        },
+        {
+          id: 'numeric',
+          question: 'value が数値の設問',
+          options: [
+            { value: 1, label: 'N-1', isDefault: true, defaultReason: null },
+            { value: 2, label: 'N-2', isDefault: false, defaultReason: null },
+          ],
+        },
+        {
+          id: 'nodefault',
+          question: 'isDefault が無い設問 (未回答になる)',
+          options: [
+            { value: 'a', label: 'D-1', isDefault: false, defaultReason: null },
+            { value: 'b', label: 'D-2', isDefault: false, defaultReason: null },
+          ],
+        },
       ],
     },
   ],
@@ -177,9 +259,6 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? '[PASS]' : '[FAIL]'} ${name}${ok || !detail ? '' : '  -- ' + detail}`);
 }
 
-// SKILL.md Step 3 は「この 1 行を丸ごと置換」と定めるため、ちょうど 1 箇所であることが契約。
-check('置換ターゲットがちょうど 1 箇所', tpl.split(PLACEHOLDER).length === 2);
-
 const filled = join(WORK, 'filled.html');
 const pristine = join(WORK, 'pristine.html');
 const edge = join(WORK, 'edge.html');
@@ -187,23 +266,33 @@ writeFileSync(filled, tpl.replace(PLACEHOLDER, `const QUESTIONS_DATA = ${JSON.st
 writeFileSync(pristine, tpl);
 writeFileSync(edge, tpl.replace(PLACEHOLDER, `const QUESTIONS_DATA = ${JSON.stringify(SAMPLE_EDGE)};`));
 
+const PROFILE = join(WORK, 'profile');
 const chrome = spawn(CHROME, [
   '--headless=new',
-  `--remote-debugging-port=${PORT}`,
-  `--user-data-dir=${join(WORK, 'profile')}`,
+  '--remote-debugging-port=0',
+  `--user-data-dir=${PROFILE}`,
   '--no-first-run',
   '--no-default-browser-check',
   '--allow-file-access-from-files',
+  // コンテナ / root 環境で sandbox が使えないケースへの対応 (使い捨てプロファイル)
+  '--no-sandbox',
+  '--disable-dev-shm-usage',
   'about:blank',
 ], { stdio: 'ignore' });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function waitForChrome() {
+  const portFile = join(PROFILE, 'DevToolsActivePort');
   for (let i = 0; i < 60; i++) {
-    try {
-      if ((await fetch(`http://127.0.0.1:${PORT}/json/version`)).ok) return;
-    } catch { /* 起動待ち */ }
+    if (existsSync(portFile)) {
+      const p = Number(readFileSync(portFile, 'utf8').split('\n')[0]);
+      if (Number.isInteger(p) && p > 0) {
+        try {
+          if ((await fetch(`http://127.0.0.1:${p}/json/version`)).ok) { PORT = p; return; }
+        } catch { /* 起動途中 */ }
+      }
+    }
     await sleep(250);
   }
   throw new Error('Chrome の CDP エンドポイントに接続できない');
@@ -255,6 +344,14 @@ async function newPage(fileUrl) {
     const m = JSON.parse(ev.data);
     if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.text);
     if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') errors.push(JSON.stringify(m.params.args));
+  });
+  // confirm() が出ると Runtime.evaluate がブロックするため、自動承諾して先へ進める。
+  s.ws.addEventListener('message', (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.method === 'Page.javascriptDialogOpening') {
+      s.dialogSeen = true;
+      s.send('Page.handleJavaScriptDialog', { accept: true });
+    }
   });
   await s.send('Runtime.enable');
   await s.send('Page.enable');
@@ -358,6 +455,10 @@ try {
     /^questionnaire-answers-\d{8}-\d{6}\.json$/.test(downloadName), downloadName);
 
   const exported = JSON.parse(await s.eval('window.__blob.text()', true));
+  // Step 5 の照合 (title / exportedAt / totalQuestions) が依存するフィールド
+  check('エクスポート: title が票のタイトルと一致', exported.title === SAMPLE.title, exported.title);
+  check('エクスポート: exportedAt がパース可能な日時',
+    Number.isFinite(Date.parse(exported.exportedAt)), String(exported.exportedAt));
   check('エクスポート: totalQuestions=3', exported.totalQuestions === 3);
   check('エクスポート: answeredCount=3', exported.answeredCount === 3);
   check('エクスポート: modifiedCount=2', exported.modifiedCount === 2);
@@ -375,7 +476,10 @@ try {
     JSON.stringify(a3));
   check('エクスポートに category / question が入る',
     a1.category === '設計判断' && a3.category === 'スコープ' && a1.question === 'デフォルトのまま確定する設問');
-  // 内部キーは出現順だが、エクスポートの id は質問データ側の id を返す (Step 7 の突き合わせ用)
+  // Step 7 の突き合わせキーは index (1 始まりの出現順)。id は参考情報。
+  check('エクスポートの index が 1 始まりの出現順',
+    a1.index === 1 && a2.index === 2 && a3.index === 3,
+    JSON.stringify([a1.index, a2.index, a3.index]));
   check('エクスポートの id が元の q.id',
     a1.id === 'q1' && a2.id === 'q2' && a3.id === 'q3',
     JSON.stringify([a1.id, a2.id, a3.id]));
@@ -389,8 +493,8 @@ try {
   {
     const { s: e, errors: eErrors } = await newPage('file://' + edge);
 
-    check('id 重複でも設問が 3 件描画される',
-      (await e.eval('document.querySelectorAll(".question-card").length')) === 3);
+    check('id 重複でも設問がすべて描画される',
+      (await e.eval('document.querySelectorAll(".question-card").length')) === 6);
     check('id 重複を画面で警告する',
       (await e.eval('!!document.querySelector(".dup-warning") && document.querySelector(".dup-warning").textContent.includes("dup")')) === true);
     check('id 重複でも radio グループが独立している',
@@ -421,6 +525,20 @@ try {
         return card.querySelectorAll('.default-badge').length === 1;
       })()`)) === true);
 
+    // value 重複 / 数値 value でも「選んだ選択肢」が正しく記録されること。
+    // value 文字列で同一性を判定すると、前者は isModified が立たず、後者は
+    // 既定値をクリックしただけで isModified が立ち、いずれも誤記録になる。
+    await e.eval(`(() => {
+      const cards = document.querySelectorAll('.question-card');
+      cards[3].querySelector('input[data-optlabel="S-2"]').click();   // 同じ value の別選択肢
+      cards[4].querySelector('input[data-optlabel="N-1"]').click();   // 数値 value の既定値を明示クリック
+    })()`);
+    await sleep(100);
+    check('同じ value の別選択肢を選ぶと .modified が付く',
+      (await e.eval('document.querySelectorAll(".question-card")[3].classList.contains("modified")')) === true);
+    check('数値 value の既定値をクリックしても .modified が付かない',
+      (await e.eval('document.querySelectorAll(".question-card")[4].classList.contains("modified")')) === false);
+
     // 表示 (DOM) と内部 state の一致: 未操作の multi 設問が「既定値のまま」で出ること
     await e.eval(`(() => {
       URL.createObjectURL = (b) => { window.__blob = b; return 'blob:stub'; };
@@ -429,25 +547,55 @@ try {
     await e.eval('document.getElementById("btn-export").click()');
     await sleep(200);
     const edgeExport = JSON.parse(await e.eval('window.__blob.text()', true));
-    check('id 重複でも回答が失われない (3 件エクスポートされる)',
-      edgeExport.totalQuestions === 3 && edgeExport.answers.length === 3,
+    const [eA, eB, eMulti, eSame, eNum, eNoDef] = edgeExport.answers;
+
+    check('id 重複でも回答が失われない (6 件エクスポートされる)',
+      edgeExport.totalQuestions === 6 && edgeExport.answers.length === 6,
       JSON.stringify(edgeExport.totalQuestions));
-    const multi = edgeExport.answers[2];
     check('isDefault 複数時、画面の選択と記録が一致する (M-1 が既定値承認)',
-      multi.selectedLabel === 'M-1' && multi.isModified === false,
-      JSON.stringify(multi));
+      eMulti.selectedLabel === 'M-1' && eMulti.isModified === false, JSON.stringify(eMulti));
     check('id 重複時も両設問がそれぞれの回答を保持する',
-      edgeExport.answers[0].selectedLabel === 'A-2' && edgeExport.answers[1].selectedLabel === 'B-1',
-      JSON.stringify(edgeExport.answers.slice(0, 2)));
+      eA.selectedLabel === 'A-2' && eB.selectedLabel === 'B-1',
+      JSON.stringify([eA.selectedLabel, eB.selectedLabel]));
+    check('value 重複時も選んだ選択肢が isModified:true で記録される',
+      eSame.selectedLabel === 'S-2' && eSame.isModified === true, JSON.stringify(eSame));
+    check('数値 value の既定値クリックは isModified:false のまま',
+      eNum.selectedLabel === 'N-1' && eNum.isModified === false, JSON.stringify(eNum));
+    check('isDefault が無い設問は未回答として出る (isAnswered:false)',
+      eNoDef.isAnswered === false && eNoDef.selectedOption === null && eNoDef.isModified === false,
+      JSON.stringify(eNoDef));
+    check('未回答が answeredCount に数えられない', edgeExport.answeredCount === 5, String(edgeExport.answeredCount));
+    check('id 重複票でも index は 1..6 の連番',
+      edgeExport.answers.map(a => a.index).join(',') === '1,2,3,4,5,6');
     check('契約違反サンプルでも JS エラーなし', eErrors.length === 0, eErrors.join(' | '));
 
     e.close();
   }
 
+  // --- 「その他」を選んで自由記述が空のまま出力する経路 (confirm() が出る唯一の経路) ---
+  {
+    const { s: c } = await newPage('file://' + filled);
+    await c.eval(`(() => {
+      URL.createObjectURL = (b) => { window.__blob = b; return 'blob:stub'; };
+      HTMLAnchorElement.prototype.click = function () { window.__downloadName = this.download; };
+      document.querySelectorAll('.question-card')[2].querySelector('input[value="__custom__"]').click();
+    })()`);
+    await sleep(100);
+    await c.eval('document.getElementById("btn-export").click()');
+    await sleep(300);
+    check('空の「その他」でエクスポートすると確認ダイアログが出る', c.dialogSeen === true);
+    const emptyExport = JSON.parse(await c.eval('window.__blob.text()', true));
+    const q3 = emptyExport.answers[2];
+    check('空の「その他」は customInput が空文字で出る (Step 5 が再確認する形)',
+      q3.selectedOption === 'custom' && q3.customInput === '' && q3.isModified === true,
+      JSON.stringify(q3));
+    c.close();
+  }
+
   // --- SKILL.md Step 3 のエスケープ手順が実際に効くこと ---
   // 質問文は issue 本文やコードベース由来なので `</script>` を含みうる。素の
   // JSON.stringify は `<` をエスケープしないため inline script が早期終了する。
-  // Step 3 が要求する「`<` を < に置換してから埋め込む」が有効であることを固定する。
+  // Step 3 が要求する「`<` を \u003c に置換してから埋め込む」が有効であることを固定する。
   {
     const XSS = {
       title: 'エスケープ検証',

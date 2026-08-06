@@ -69,8 +69,9 @@ HTML は**回答用の揮発ファイル**（UX のための一時物）、`qa/*
 
 **必須制約:**
 
-- **`id` は票全体で一意にする**（カテゴリを跨いでも重複させない。`q1`〜`qN` の通し番号でよい）。重複するとエクスポート JSON の `id` が重複し、Step 7 の突き合わせが曖昧になる（回答自体は出現順で管理されるため失われず、テンプレートは重複を検知して画面に警告を出す）。
+- **`id` は票全体で一意にする**（カテゴリを跨いでも重複させない。`q1`〜`qN` の通し番号でよい）。回答自体は出現順で管理されるため重複しても失われず、テンプレートは重複を検知して画面に警告を出すが、エクスポート JSON の `id` が重複してデータの追跡が困難になる。
 - **`isDefault: true` は 1 問につき 1 つだけ**にする。複数指定した場合は先頭のみが既定値として扱われる。
+- **`value` は同一設問内で一意にする**（型は文字列を推奨）。選択の同一性は選択肢の出現順で判定されるため重複しても誤記録は起きないが、`selectedOption` から選択肢を逆引きできなくなる。
 
 ```json
 {
@@ -122,8 +123,23 @@ HTML は**回答用の揮発ファイル**（UX のための一時物）、`qa/*
 3. テンプレートを読み込む: `~/.claude/skills/questionnaire/assets/questionnaire-template.html`
 4. テンプレート内の `const QUESTIONS_DATA = [];` を Step 2 の JSON で置換する。**埋め込む前に JSON 中の `<` をすべて `\u003c` にエスケープする**（JSON 文字列としては等価なので値は変わらない。エスケープしないと、質問文や `location` に `</script>` が含まれたとき inline script が早期終了して画面が壊れる）
 5. 置換後の HTML を `docs/temp/questionnaire.html` に Write
-6. 生成物を検証する（不正なリテラルを埋め込むと inline script が parse エラーになり、白画面のまま原因が分からなくなるため）:
-   - `python3 -m json.tool docs/temp/questionnaire-data.json > /dev/null` で JSON が妥当なこと
+6. 生成物を検証する（不正なリテラルを埋め込むと inline script が parse エラーになり、白画面のまま原因が分からなくなるため）。**画面上の警告は人間にしか届かないので、契約違反はここで機械的に検出する**:
+
+   ```bash
+   # JSON の妥当性 + 上記「必須制約」の充足を一括で検証する
+   python3 - <<'PY'
+   import json, sys
+   d = json.load(open('docs/temp/questionnaire-data.json'))
+   qs = [q for c in d.get('categories', []) for q in c.get('questions', [])]
+   ids = [q.get('id') for q in qs]
+   dup = {i for i in ids if ids.count(i) > 1}
+   bad = [q.get('id') for q in qs if sum(1 for o in q.get('options', []) if o.get('isDefault')) != 1]
+   if dup: sys.exit(f'id が重複: {sorted(dup)}')
+   if bad: sys.exit(f'isDefault が 1 つでない設問: {bad}')
+   print(f'OK: {len(qs)} 問')
+   PY
+   ```
+
    - `docs/temp/questionnaire.html` に `const QUESTIONS_DATA = [];` が残っていないこと（置換漏れ検出）
    - `docs/temp/questionnaire.html` に `</script>` が 1 個だけであること（breakout 検出）
 
@@ -149,18 +165,23 @@ open docs/temp/questionnaire.html
 
 ユーザーが「回答しました」「完了」等と伝えたら:
 
-1. エクスポートされたファイルを特定する。ファイル名は `questionnaire-answers-<エクスポート日時>.json` 形式（例: `questionnaire-answers-20260804-071530.json`）で毎回一意になる:
+1. エクスポートされたファイルを特定する。ファイル名は `questionnaire-answers-<ローカル日時>.json` 形式（例: `questionnaire-answers-20260804-161530.json`）で毎回一意になる:
 
    ```bash
-   ls -t ~/Downloads/questionnaire-answers-*.json 2>/dev/null | head -1
+   ANSWERS=$(ls -t ~/Downloads/questionnaire-answers-*.json 2>/dev/null | head -1)
    ```
 
    見つからない場合はブラウザのダウンロード先設定をユーザーに確認する。
 
-2. Read したら**その回答が今回の票のものであることを検証する**（古い回答をそのまま `qa/*.md` に確定記録しないため）:
-   - `title` が `docs/temp/questionnaire-data.json` の `title` と一致すること
-   - `exportedAt` が `docs/temp/questionnaire.html` の生成時刻より後であること
-   - `totalQuestions` が今回の設問数と一致すること
+2. Read する前に**その回答が今回の票のものであることを検証する**（古い回答をそのまま `qa/*.md` に確定記録しないため）:
+
+   ```bash
+   # 回答ファイルが HTML より新しいこと。mtime 同士の比較なのでタイムゾーンに依存しない。
+   # JSON の exportedAt は UTC の ISO8601 なので、ローカル時刻と直接比較してはいけない。
+   [ "$ANSWERS" -nt docs/temp/questionnaire.html ] && echo fresh || echo stale
+   ```
+
+   さらに Read 後、`title` が `docs/temp/questionnaire-data.json` の `title` と一致し、`totalQuestions` が今回の設問数と一致することを確認する。
 
    いずれかが合わなければ別の票／古い回答なので、ユーザーに再エクスポートを依頼する。
 
@@ -202,7 +223,9 @@ open docs/temp/questionnaire.html
 1. `mkdir -p qa`（利用リポのルート。冪等）
 2. `<slug>` は `title`（無ければ `scope`）の主題を kebab-case にした英字（例: `search-filter-spec`）。ファイル名は `<slug>-questionnaire.md`
 3. 作成日・回答確定日は `date +%Y-%m-%d` で取得（学習データの日付に頼らない）
-4. **質問番号**: 質問は出現順に `Q01` / `Q02` … と**ゼロ埋め2桁で採番**する（HTML 内部の `Q1` 表示や JSON の `id`（`q1`）とは独立。`[Q0x]` ブロックと回答表の `No.` は同じ採番に揃える）
+4. **質問番号と突き合わせキー**: 質問は出現順に `Q01` / `Q02` … と**ゼロ埋め2桁で採番**する（`[Q0x]` ブロックと回答表の `No.` は同じ採番に揃える）。
+   - **突き合わせにはエクスポート JSON の `index`（1 始まりの出現順）を使う。`id` は突き合わせキーにしない**。`id` は票データ側の値をそのまま返す参考情報で、一意性が保証されないため、キーに使うと別の設問の回答を取り違えて確定記録しうる。
+   - `Q01` は `index: 1` に対応する。`questionnaire-data.json` の `categories[].questions[]` を平坦化した出現順とも一致する。
 5. 以下のテンプレートで Write（`{...}` は `docs/temp/questionnaire-data.json` と回答から埋める。可変長フィールドは全要素を展開する）:
 
 ```markdown
