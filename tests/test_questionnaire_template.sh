@@ -76,6 +76,76 @@ scheck "テンプレートの置換ターゲットがちょうど 1 箇所" "$(
     [ "$n" = "1" ] && echo ok || echo "$n 箇所"
 )"
 
+# SKILL.md Step 3 の契約違反チェックと同じ判定を実行する。手順として書いた検証が
+# 実際に「正常系を通し、違反を弾く」ことを固定する (手順が動かなければ、契約違反が
+# qa/*.md 確定後まで検出されない)。
+validate_data() {
+    python3 - "$1" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+qs = [q for c in d.get('categories', []) for q in c.get('questions', [])]
+ids = [q.get('id') for q in qs]
+dup = {i for i in ids if ids.count(i) > 1}
+bad = [q.get('id') for q in qs if sum(1 for o in q.get('options', []) if o.get('isDefault')) != 1]
+vdup = [q.get('id') for q in qs
+        if len({str(o.get('value')) for o in q.get('options', [])}) != len(q.get('options', []))]
+res = [str(o.get('value')) for q in qs for o in q.get('options', [])]
+bad_res = [v for v in res if v in ('custom', '__custom__')]
+if dup: sys.exit(f'id が重複: {sorted(dup)}')
+if bad: sys.exit(f'isDefault が 1 つでない設問: {bad}')
+if vdup: sys.exit(f'value が同一設問内で重複: {vdup}')
+if bad_res: sys.exit(f'value に予約語が使われている: {sorted(set(bad_res))}')
+print(f'OK: {len(qs)} 問')
+PY
+}
+
+STEP3_TMP="$(mktemp -d)"
+cat > "$STEP3_TMP/valid.json" <<'JSON'
+{"title":"t","categories":[{"name":"c","questions":[
+  {"id":"q1","options":[{"value":"a","isDefault":true},{"value":"b","isDefault":false}]},
+  {"id":"q2","options":[{"value":"a","isDefault":true},{"value":"b","isDefault":false}]}]}]}
+JSON
+cat > "$STEP3_TMP/dup_id.json" <<'JSON'
+{"title":"t","categories":[{"name":"c","questions":[
+  {"id":"dup","options":[{"value":"a","isDefault":true}]},
+  {"id":"dup","options":[{"value":"a","isDefault":true}]}]}]}
+JSON
+cat > "$STEP3_TMP/multi_default.json" <<'JSON'
+{"title":"t","categories":[{"name":"c","questions":[
+  {"id":"q1","options":[{"value":"a","isDefault":true},{"value":"b","isDefault":true}]}]}]}
+JSON
+cat > "$STEP3_TMP/dup_value.json" <<'JSON'
+{"title":"t","categories":[{"name":"c","questions":[
+  {"id":"q1","options":[{"value":"same","isDefault":true},{"value":"same","isDefault":false}]}]}]}
+JSON
+cat > "$STEP3_TMP/reserved.json" <<'JSON'
+{"title":"t","categories":[{"name":"c","questions":[
+  {"id":"q1","options":[{"value":"custom","isDefault":true},{"value":"b","isDefault":false}]}]}]}
+JSON
+
+scheck "Step 3 の契約検証: 正常系が通る" "$(
+    validate_data "$STEP3_TMP/valid.json" >/dev/null 2>&1 && echo ok || echo "正常系が落ちた"
+)"
+for case in dup_id multi_default dup_value reserved; do
+    scheck "Step 3 の契約検証: $case を弾く" "$(
+        validate_data "$STEP3_TMP/$case.json" >/dev/null 2>&1 && echo "違反を見逃した" || echo ok
+    )"
+done
+
+# SKILL.md Step 5 の鮮度判定 (mtime 比較) が、タイムゾーンに依存せず
+# 新しい回答を fresh・古い回答を stale と判定することを固定する。
+touch "$STEP3_TMP/questionnaire.html"
+sleep 1
+touch "$STEP3_TMP/fresh.json"
+touch -t 202001010000 "$STEP3_TMP/old.json"
+scheck "Step 5 の鮮度判定: 新しい回答を fresh と判定" "$(
+    [ "$STEP3_TMP/fresh.json" -nt "$STEP3_TMP/questionnaire.html" ] && echo ok || echo "fresh を stale と誤判定"
+)"
+scheck "Step 5 の鮮度判定: 古い回答を stale と判定" "$(
+    [ "$STEP3_TMP/old.json" -nt "$STEP3_TMP/questionnaire.html" ] && echo "stale を fresh と誤判定" || echo ok
+)"
+rm -rf "$STEP3_TMP"
+
 # --- 前提コマンドの解決 (無ければブラウザ部分のみ SKIP) ---
 skip_browser() {
     echo "[SKIP] $1"
@@ -267,6 +337,11 @@ writeFileSync(pristine, tpl);
 writeFileSync(edge, tpl.replace(PLACEHOLDER, `const QUESTIONS_DATA = ${JSON.stringify(SAMPLE_EDGE)};`));
 
 const PROFILE = join(WORK, 'profile');
+// sandbox の無効化は、実際に必要な環境 (root 実行やコンテナ) に限る。
+// sandbox が正常に働く開発者マシンでまで一律に緩めない。
+const SANDBOX_ARGS = (process.getuid && process.getuid() === 0) || process.env.CHROME_NO_SANDBOX
+  ? ['--no-sandbox', '--disable-dev-shm-usage']
+  : [];
 const chrome = spawn(CHROME, [
   '--headless=new',
   '--remote-debugging-port=0',
@@ -274,9 +349,7 @@ const chrome = spawn(CHROME, [
   '--no-first-run',
   '--no-default-browser-check',
   '--allow-file-access-from-files',
-  // コンテナ / root 環境で sandbox が使えないケースへの対応 (使い捨てプロファイル)
-  '--no-sandbox',
-  '--disable-dev-shm-usage',
+  ...SANDBOX_ARGS,
   'about:blank',
 ], { stdio: 'ignore' });
 
@@ -336,7 +409,9 @@ class Session {
 }
 
 async function newPage(fileUrl) {
-  const r = await fetch(`http://127.0.0.1:${PORT}/json/new?${encodeURIComponent(fileUrl)}`, { method: 'PUT' });
+  // about:blank で開いてから navigate する。/json/new に URL を渡すと、
+  // WebSocket 接続前に init() が走り、ロード時例外を購読できない。
+  const r = await fetch(`http://127.0.0.1:${PORT}/json/new?about:blank`, { method: 'PUT' });
   const target = await r.json();
   const s = await Session.open(target.webSocketDebuggerUrl);
   const errors = [];
@@ -350,11 +425,12 @@ async function newPage(fileUrl) {
     const m = JSON.parse(ev.data);
     if (m.method === 'Page.javascriptDialogOpening') {
       s.dialogSeen = true;
-      s.send('Page.handleJavaScriptDialog', { accept: true });
+      s.send('Page.handleJavaScriptDialog', { accept: true }).catch(() => {});
     }
   });
   await s.send('Runtime.enable');
   await s.send('Page.enable');
+  await s.send('Page.navigate', { url: fileUrl });
   for (let i = 0; i < 40; i++) {
     if (await s.eval('document.readyState === "complete"')) break;
     await sleep(150);
@@ -470,10 +546,11 @@ try {
   check('Q2 = 別選択肢 (isModified:true / selectedLabel は生の値)',
     a2.isModified === true && a2.selectedOption === 'b' && a2.selectedLabel === '選択肢B<script>',
     JSON.stringify(a2));
-  check('Q3 = その他 (selectedOption:custom / customInput に本文)',
-    a3.isModified === true && a3.selectedOption === 'custom' && a3.selectedLabel === '(その他)'
+  check('Q3 = その他 (isCustom:true / customInput に本文)',
+    a3.isModified === true && a3.isCustom === true && a3.selectedLabel === '(その他)'
       && a3.customInput === '両方を段階的に導入する',
     JSON.stringify(a3));
+  check('通常回答は isCustom:false', a1.isCustom === false && a2.isCustom === false);
   check('エクスポートに category / question が入る',
     a1.category === '設計判断' && a3.category === 'スコープ' && a1.question === 'デフォルトのまま確定する設問');
   // Step 7 の突き合わせキーは index (1 始まりの出現順)。id は参考情報。
@@ -561,6 +638,12 @@ try {
       eSame.selectedLabel === 'S-2' && eSame.isModified === true, JSON.stringify(eSame));
     check('数値 value の既定値クリックは isModified:false のまま',
       eNum.selectedLabel === 'N-1' && eNum.isModified === false, JSON.stringify(eNum));
+    // 未操作の設問 (eMulti) とクリック済みの設問 (eNum) で selectedOption の型が
+    // 揃っていること。揃わないと selectedOption からの逆引きが不安定になる。
+    check('selectedOption は未操作/クリック済みのどちらでも文字列',
+      typeof eMulti.selectedOption === 'string' && typeof eNum.selectedOption === 'string'
+        && eNum.selectedOption === '1',
+      JSON.stringify([eMulti.selectedOption, eNum.selectedOption]));
     check('isDefault が無い設問は未回答として出る (isAnswered:false)',
       eNoDef.isAnswered === false && eNoDef.selectedOption === null && eNoDef.isModified === false,
       JSON.stringify(eNoDef));
@@ -587,7 +670,7 @@ try {
     const emptyExport = JSON.parse(await c.eval('window.__blob.text()', true));
     const q3 = emptyExport.answers[2];
     check('空の「その他」は customInput が空文字で出る (Step 5 が再確認する形)',
-      q3.selectedOption === 'custom' && q3.customInput === '' && q3.isModified === true,
+      q3.isCustom === true && q3.customInput === '' && q3.isModified === true,
       JSON.stringify(q3));
     c.close();
   }
@@ -643,8 +726,17 @@ try {
 }
 
 const failed = results.filter((ok) => !ok).length;
-console.log(`\n=== ${results.length - failed} passed / ${failed} failed ===`);
+console.log(`\n--- ブラウザ検証: ${results.length - failed} passed / ${failed} failed ---`);
 process.exit(failed ? 1 : 0);
 NODE_EOF
+NODE_STATUS=$?
 
-exit $?
+# 静的検証とブラウザ検証の両方を終了コードに反映する。
+# node の終了コードだけを返すと、静的検証 (skill の登録状態) が FAIL しても
+# Chrome のある環境では exit 0 になり、登録の回帰が黙って素通りする。
+echo ""
+echo "=== 静的検証: $STATIC_FAIL failed / ブラウザ検証: exit $NODE_STATUS ==="
+if [ "$NODE_STATUS" -ne 0 ] || [ "$STATIC_FAIL" -ne 0 ]; then
+    exit 1
+fi
+exit 0

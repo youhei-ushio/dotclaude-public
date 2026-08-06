@@ -71,7 +71,7 @@ HTML は**回答用の揮発ファイル**（UX のための一時物）、`qa/*
 
 - **`id` は票全体で一意にする**（カテゴリを跨いでも重複させない。`q1`〜`qN` の通し番号でよい）。回答自体は出現順で管理されるため重複しても失われず、テンプレートは重複を検知して画面に警告を出すが、エクスポート JSON の `id` が重複してデータの追跡が困難になる。
 - **`isDefault: true` は 1 問につき 1 つだけ**にする。複数指定した場合は先頭のみが既定値として扱われる。
-- **`value` は同一設問内で一意にする**（型は文字列を推奨）。選択の同一性は選択肢の出現順で判定されるため重複しても誤記録は起きないが、`selectedOption` から選択肢を逆引きできなくなる。
+- **`value` は同一設問内で一意な文字列にする。`custom` / `__custom__` は予約語なので使わない**。選択の同一性は選択肢の出現順で判定されるため重複しても誤記録は起きないが、`selectedOption` から選択肢を逆引きできなくなる。
 
 ```json
 {
@@ -125,23 +125,38 @@ HTML は**回答用の揮発ファイル**（UX のための一時物）、`qa/*
 5. 置換後の HTML を `docs/temp/questionnaire.html` に Write
 6. 生成物を検証する（不正なリテラルを埋め込むと inline script が parse エラーになり、白画面のまま原因が分からなくなるため）。**画面上の警告は人間にしか届かないので、契約違反はここで機械的に検出する**:
 
-   ```bash
-   # JSON の妥当性 + 上記「必須制約」の充足を一括で検証する
-   python3 - <<'PY'
-   import json, sys
-   d = json.load(open('docs/temp/questionnaire-data.json'))
-   qs = [q for c in d.get('categories', []) for q in c.get('questions', [])]
-   ids = [q.get('id') for q in qs]
-   dup = {i for i in ids if ids.count(i) > 1}
-   bad = [q.get('id') for q in qs if sum(1 for o in q.get('options', []) if o.get('isDefault')) != 1]
-   if dup: sys.exit(f'id が重複: {sorted(dup)}')
-   if bad: sys.exit(f'isDefault が 1 つでない設問: {bad}')
-   print(f'OK: {len(qs)} 問')
-   PY
-   ```
+```bash
+# JSON の妥当性 + 上記「必須制約」の充足を一括で検証する。
+# heredoc の本文と終端 PY は必ず行頭に置くこと (字下げすると終端が一致しない)。
+python3 - <<'PY'
+import json, sys
+d = json.load(open('docs/temp/questionnaire-data.json'))
+qs = [q for c in d.get('categories', []) for q in c.get('questions', [])]
+ids = [q.get('id') for q in qs]
+dup = {i for i in ids if ids.count(i) > 1}
+bad = [q.get('id') for q in qs if sum(1 for o in q.get('options', []) if o.get('isDefault')) != 1]
+vdup = [q.get('id') for q in qs
+        if len({str(o.get('value')) for o in q.get('options', [])}) != len(q.get('options', []))]
+res = [str(o.get('value')) for q in qs for o in q.get('options', [])]
+bad_res = [v for v in res if v in ('custom', '__custom__')]
+if dup: sys.exit(f'id が重複: {sorted(dup)}')
+if bad: sys.exit(f'isDefault が 1 つでない設問: {bad}')
+if vdup: sys.exit(f'value が同一設問内で重複: {vdup}')
+if bad_res: sys.exit(f'value に予約語が使われている: {sorted(set(bad_res))}')
+print(f'OK: {len(qs)} 問')
+PY
+```
 
-   - `docs/temp/questionnaire.html` に `const QUESTIONS_DATA = [];` が残っていないこと（置換漏れ検出）
-   - `docs/temp/questionnaire.html` に `</script>` が 1 個だけであること（breakout 検出）
+**この検証が非 0 で終了したら Step 2 に戻って質問データを直し、HTML を作り直す**（違反したまま Step 4 に進まない）。
+
+あわせて生成された HTML も確認する:
+
+```bash
+# 置換漏れ検出 (0 であること)
+grep -c '^const QUESTIONS_DATA = \[\];$' docs/temp/questionnaire.html
+# breakout 検出 (1 であること)
+grep -c '</script>' docs/temp/questionnaire.html
+```
 
 ```
 テンプレート内の置換対象（この 1 行を丸ごと置換）:
@@ -167,29 +182,34 @@ open docs/temp/questionnaire.html
 
 1. エクスポートされたファイルを特定する。ファイル名は `questionnaire-answers-<ローカル日時>.json` 形式（例: `questionnaire-answers-20260804-161530.json`）で毎回一意になる:
 
-   ```bash
-   ANSWERS=$(ls -t ~/Downloads/questionnaire-answers-*.json 2>/dev/null | head -1)
-   ```
+```bash
+# ファイル特定と鮮度判定を 1 コマンドで行う。Bash 呼び出しごとに別シェルになるため、
+# 変数代入と参照を別コマンドに分けると値が持ち越されない。
+# mtime 同士の比較なのでタイムゾーンに依存しない (JSON の exportedAt は UTC の
+# ISO8601 なので、ローカル時刻と直接比較してはいけない)。
+ANSWERS=$(ls -t ~/Downloads/questionnaire-answers-*.json 2>/dev/null | head -1)
+if [ -z "$ANSWERS" ]; then
+  echo "notfound"
+elif [ "$ANSWERS" -nt docs/temp/questionnaire.html ]; then
+  echo "fresh: $ANSWERS"
+else
+  echo "stale: $ANSWERS"
+fi
+```
 
-   見つからない場合はブラウザのダウンロード先設定をユーザーに確認する。
+   - `notfound` → ブラウザのダウンロード先設定をユーザーに確認する
+   - `stale` → 今回のエクスポートではない（古い回答）。ユーザーに再エクスポートを依頼する
+   - `fresh` → そのパスを Read する
 
-2. Read する前に**その回答が今回の票のものであることを検証する**（古い回答をそのまま `qa/*.md` に確定記録しないため）:
-
-   ```bash
-   # 回答ファイルが HTML より新しいこと。mtime 同士の比較なのでタイムゾーンに依存しない。
-   # JSON の exportedAt は UTC の ISO8601 なので、ローカル時刻と直接比較してはいけない。
-   [ "$ANSWERS" -nt docs/temp/questionnaire.html ] && echo fresh || echo stale
-   ```
-
-   さらに Read 後、`title` が `docs/temp/questionnaire-data.json` の `title` と一致し、`totalQuestions` が今回の設問数と一致することを確認する。
-
-   いずれかが合わなければ別の票／古い回答なので、ユーザーに再エクスポートを依頼する。
+2. Read したら**その回答が今回の票のものであることを検証する**（古い回答をそのまま `qa/*.md` に確定記録しないため）。`title` が `docs/temp/questionnaire-data.json` の `title` と一致し、`totalQuestions` が今回の設問数と一致すること。合わなければ別の票なので、ユーザーに再エクスポートを依頼する。
 
 3. 各回答を解釈:
-   - `isAnswered` が `false` (`selectedOption` が `null`) → 未回答扱い。ユーザーに再確認する
-   - `selectedOption` が `"custom"` かつ `customInput` が空文字 → 「その他」選択だが自由記述無し。ユーザーに再確認する
-   - `selectedOption` が `"custom"` かつ `customInput` に内容がある → `customInput` を採用
+   - `isAnswered` が `false` → 未回答扱い。ユーザーに再確認する
+   - `isCustom` が `true` かつ `customInput` が空文字 → 「その他」選択だが自由記述無し。ユーザーに再確認する
+   - `isCustom` が `true` かつ `customInput` に内容がある → `customInput` を採用
    - それ以外 → `selectedLabel` を採用
+
+   **「その他」かどうかは `isCustom` で判定する。** `selectedOption` は選択肢の `value` をそのまま返すため、`value` が文字列 `custom` の選択肢と区別できない。
 4. デフォルトから変更された回答を特に注目して報告
 
 ### Step 6: 回答サマリーの提示
@@ -276,7 +296,7 @@ open docs/temp/questionnaire.html
 - `回答` 列・`根拠` 列の対応:
   - `既定値承認` → `回答` は選択された label、`根拠` は `既定値候補の理由`（defaultReason）
   - `人間判断`（別の選択肢を選択）→ `回答` は選択された label、`根拠` は確定時の判断理由
-  - `人間判断`（「その他」= custom を選択。`isModified` は常に `true`）→ `回答` は `customInput` の本文、`根拠` も同記述
+  - `人間判断`（「その他」= `isCustom` が `true`。`isModified` は常に `true`）→ `回答` は `customInput` の本文、`根拠` も同記述
 - HVE メタ（対象ドキュメント/該当箇所/問題種別/重大度/影響）が未設定の質問は、その行を省略してよい（無理に埋めない）。
 - 任意メタ（scope/targetDocs/relatedScope/inferencePolicy）が無い場合は該当ヘッダ行を省略する。
 

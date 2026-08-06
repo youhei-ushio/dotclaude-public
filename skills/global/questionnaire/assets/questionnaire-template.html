@@ -367,8 +367,10 @@ function init() {
       // 2 つあると別の選択肢を選んでも isModified が立たない、という誤記録を生む。
       const defaultIdx = defaultOpt ? String(opts.indexOf(defaultOpt)) : null;
       defaultSelections[key] = defaultIdx;
+      // value / label は文字列に正規化して保持する。未操作時は生の値、クリック後は
+      // radio.value (常に文字列) となって同じ選択肢でも型が変わるため。
       currentSelections[key] = defaultOpt
-        ? { optKey: defaultIdx, value: defaultOpt.value, label: defaultOpt.label, custom: null }
+        ? { optKey: defaultIdx, value: str(defaultOpt.value), label: str(defaultOpt.label), custom: null }
         : { optKey: null, value: null, label: '', custom: null };
 
       const card = document.createElement('div');
@@ -453,6 +455,12 @@ function init() {
   updateProgress();
 }
 
+// null/undefined は null のまま、それ以外は文字列化する。
+// undefined を残すと JSON.stringify がキーごとエクスポートから落とす。
+function str(v) {
+  return v == null ? null : String(v);
+}
+
 function esc(s) {
   if (s == null) return '';
   return String(s)
@@ -481,12 +489,12 @@ function onSelect(radio) {
       customInput.disabled = false;
       customInput.focus();
     }
-    currentSelections[qId] = { optKey: optKey, value: 'custom', label: '', custom: customInput ? customInput.value : '' };
+    currentSelections[qId] = { optKey: optKey, value: null, label: '', custom: customInput ? customInput.value : '' };
   } else {
     const labelEl = radio.closest('.option-label');
     if (labelEl) labelEl.classList.add('selected');
     if (customInput) customInput.disabled = true;
-    currentSelections[qId] = { optKey: optKey, value: radio.value, label: label, custom: null };
+    currentSelections[qId] = { optKey: optKey, value: str(radio.value), label: str(label), custom: null };
   }
 
   if (defaultSelections[qId] !== optKey) {
@@ -541,10 +549,13 @@ function exportAnswers() {
     const isCustom = sel.optKey === '__custom__';
     return {
       index: i + 1,
-      id: qi.id == null ? null : qi.id,
-      category: qi.category || '',
-      question: qi.question || '',
+      id: str(qi.id),
+      category: str(qi.category) || '',
+      question: str(qi.question) || '',
       isAnswered: sel.optKey != null,
+      // 「その他」の判定は isCustom を使う。selectedOption は選択肢の value を
+      // そのまま返すため、value が文字列 "custom" の正当な選択肢と区別できない。
+      isCustom: isCustom,
       selectedOption: isCustom ? 'custom' : sel.value,
       selectedLabel: isCustom ? '(その他)' : sel.label,
       customInput: isCustom ? (sel.custom == null ? '' : sel.custom) : null,
