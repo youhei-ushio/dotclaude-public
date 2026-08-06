@@ -47,7 +47,7 @@ create-pr Step 6 からの内部呼び出しは作りたての自分の PR が�
 
 ### 適用範囲
 
-本ルールが禁止対象とするのは **Step 2 のレビュー構成と巡数上限の独断短縮のみ**。skill 内に明記された条件付き skip パス (Step 5 の UI 影響ファイルなし時 skip、Step 4 先頭の early-break による escalate / auto-fix=0 中断等) は本ルールの対象外であり、明記された条件で正規に skip / 中断する。
+本ルールが禁止対象とするのは **Step 2 のレビュー構成と巡数上限の独断短縮のみ**。skill 内に明記された条件付き skip パス (Step 5 のブラウザテスト未実施時 skip、Step 4 先頭の early-break による escalate / auto-fix=0 中断等) は本ルールの対象外であり、明記された条件で正規に skip / 中断する。
 
 **review-only モードの ITER_MAX=1 は本ルールの「短縮」に該当しない**: Step 0.4 の説明 (line 「review-only モードの ITER_MAX が 1 である理由」参照) のとおり、修正をかけずに reviewer を再起動しても新しい情報が得られない構造的理由による設計上の正規値。fix モードの「5 巡」と同列の規範であり、「独断で減らした」ものではない。
 
@@ -304,18 +304,23 @@ if MODE == "review-only":
     BROWSER_TEST_DONE = False   # review-only は Step 5 自体 skip するため使わないが、
                                 # 未定義参照リスク根絶のため明示的に False で初期化
 else:
-    # fix モード: PR diff に UI 影響ファイルが含まれれば True。
-    # - 判定パターンは create-pr Step 3 の diff 判定と揃えている
-    #   (パターンは自プロジェクトのビュー/コンポーネントの配置に読み替える)
-    # - create-pr Step 3 が dev server 起動不可等で skip された PR でも True に
-    #   なりうるが、その場合は Step 5 の再走査が改めてブラウザテストを実行する
-    #   ため安全側
-    # - create-pr Step 3 は local branch を `git diff "$BASE"...HEAD` で見るのに
-    #   対し、本 Step は PR 番号ベースなので `gh pr diff` を使う
-    #   (対象範囲が厳密には異なる)
-    BROWSER_TEST_DONE=$(gh pr diff "$N" --repo "$OWNER_REPO" --name-only \
-                        | grep -qE '\.(vue|tsx|jsx|svelte)$|^(resources/views|resources/js|src/.*components?)/' \
-                        && echo True || echo False)
+    # fix モード: create-pr Step 3 がブラウザテストを実施すると PR 本文の
+    # Test plan に「- [x] ブラウザテスト: ... OK」の 1 行が残る (create-pr
+    # Step 3 の項番 6 の規約)。この **テキスト証跡** の有無で初回実施済かを
+    # 判定する。
+    # - スクリーンショットは PR に掲載しない方針なので、判定キーを画像セクション
+    #   ではなくテキスト 1 行に置く (リポジトリを肥大化させずに証跡を残せる)
+    # - skip された Step 3 は `- [ ] ブラウザテスト: skip (...)` を残す規約なので
+    #   実施済と誤認しない (`[x]` のみをマッチさせる)
+    # - 取得と判定を分離し、gh の失敗 (認証切れ / ネットワーク / API エラー) を
+    #   「未実施」と誤認しないよう明示エラーで止める。1 本のパイプで書くと
+    #   pipefail 下で `grep -q` の早期終了が gh を SIGPIPE (141) で落として
+    #   True→False に反転する事故もある
+    PR_BODY=$(gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body)
+    if [ $? -ne 0 ]:
+        ESCALATE_REASON = "pr-fetch-failed"; 中断して Step 7 へ
+    BROWSER_TEST_DONE=$(printf '%s\n' "$PR_BODY" \
+                        | grep -qE '^- \[x\] ブラウザテスト:' && echo True || echo False)
 REBASED_THIS_ITERATION = False   # Step 1 で毎巡先頭に再代入されるが、全 MODE 共通
                                   # 変数として未定義参照リスクの根絶のため init
 ```
@@ -893,8 +898,9 @@ UI 影響あり判定 (いずれか満たせば再走査)。**下記パターン
   末尾のパスは自プロジェクトのビューディレクトリに置き換える。例: Rails `app/views/**`、Vue `src/**`)
 
 ```text
-if BROWSER_TEST_DONE  # Step 0.4 で判定: PR diff に UI 影響ファイルが
-                      # 含まれれば True (経路 A/B 共通)
+if BROWSER_TEST_DONE  # Step 0.4 で判定: PR 本文の Test plan に
+                      # 「- [x] ブラウザテスト: ...」の 1 行があれば True
+                      # (経路 A/B 共通)
     AND (a または b または c または d):
     全ケースを再走査
     失敗したら ESCALATE_REASON = "browser-regression" を立てて Step 7 へ進む
@@ -902,8 +908,8 @@ if BROWSER_TEST_DONE  # Step 0.4 で判定: PR diff に UI 影響ファイルが
 
 以下は完全 skip (= 正常な終了パス、escalate しない):
 
-- `BROWSER_TEST_DONE == False` (PR diff に UI 影響ファイルが無い PR、
-  経路 A/B 共通)
+- `BROWSER_TEST_DONE == False` (Test plan にブラウザテスト実施の 1 行が無い
+  = 初回もブラウザテスト未実施 / skip だった PR、経路 A/B 共通)
 - 今巡の auto-fix が typo / import 整理など UI に無関係なもののみ
 
 ### Step 6: 巡数判定とループ継続
@@ -1373,10 +1379,10 @@ Step 5 を参照。判定の skip 判断は不要。条件が false でも実施
   時はユーザーがそのまま手元で次操作する想定で awaiting 化不要
 - frontmatter `allowed-tools` の `mcp__playwright__*` は **Step 5 の
   ブラウザテスト再走査用**。実起動の条件は `BROWSER_TEST_DONE == True`
-  (= PR diff に UI 影響ファイルあり) かつ
+  (= PR 本文 Test plan に `- [x] ブラウザテスト: ...` の 1 行あり) かつ
   Step 5 UI 影響あり判定 (a)/(b)/(c)/(d) のいずれか。経路 A (create-pr 経由)
-  で UI 変更を含む PR が主想定だが、経路 B (ad-hoc) でも判定キーが満たされ
-  れば起動する (allowed-tools での ACL は経路を区別しない)。
+  で初回ブラウザテスト実施済の PR が主想定だが、経路 B (ad-hoc) でも判定
+  キーが満たされれば起動する (allowed-tools での ACL は経路を区別しない)。
   起動の skip ロジックは Step 5 末尾の skip 条件で集中管理されているため、
   ACL に経路区別を持たせる必要はない
 - 本 skill 内の `bash` 言語タグ付き code block は原則 **LLM 向け疑似コード**
