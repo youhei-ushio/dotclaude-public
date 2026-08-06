@@ -47,7 +47,7 @@ create-pr Step 6 からの内部呼び出しは作りたての自分の PR が�
 
 ### 適用範囲
 
-本ルールが禁止対象とするのは **Step 2 のレビュー構成と巡数上限の独断短縮のみ**。skill 内に明記された条件付き skip パス (Step 5 のブラウザテスト未実施時 skip、Step 4 先頭の early-break による escalate / auto-fix=0 中断等) は本ルールの対象外であり、明記された条件で正規に skip / 中断する。
+本ルールが禁止対象とするのは **Step 2 のレビュー構成と巡数上限の独断短縮のみ**。skill 内に明記された条件付き skip パス (Step 5 の UI 影響ファイルなし時 skip、Step 4 先頭の early-break による escalate / auto-fix=0 中断等) は本ルールの対象外であり、明記された条件で正規に skip / 中断する。
 
 **review-only モードの ITER_MAX=1 は本ルールの「短縮」に該当しない**: Step 0.4 の説明 (line 「review-only モードの ITER_MAX が 1 である理由」参照) のとおり、修正をかけずに reviewer を再起動しても新しい情報が得られない構造的理由による設計上の正規値。fix モードの「5 巡」と同列の規範であり、「独断で減らした」ものではない。
 
@@ -1375,8 +1375,8 @@ Step 5 を参照。判定の skip 判断は不要。条件が false でも実施
   ブラウザテスト再走査用**。実起動の条件は `BROWSER_TEST_DONE == True`
   (= PR diff に UI 影響ファイルあり) かつ
   Step 5 UI 影響あり判定 (a)/(b)/(c)/(d) のいずれか。経路 A (create-pr 経由)
-  で初回ブラウザテスト実施済の PR が主想定だが、経路 B (ad-hoc) でも判定
-  キーが満たされれば起動する (allowed-tools での ACL は経路を区別しない)。
+  で UI 変更を含む PR が主想定だが、経路 B (ad-hoc) でも判定キーが満たされ
+  れば起動する (allowed-tools での ACL は経路を区別しない)。
   起動の skip ロジックは Step 5 末尾の skip 条件で集中管理されているため、
   ACL に経路区別を持たせる必要はない
 - 本 skill 内の `bash` 言語タグ付き code block は原則 **LLM 向け疑似コード**
