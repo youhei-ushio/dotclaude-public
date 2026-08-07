@@ -260,12 +260,17 @@ if [ -f docs/temp/pr-body.md ]:
                                 # 用意したファイル → 最後の rm は呼び出し元
     else:
         # sidecar 無し / 別 PR のゴミファイル → 経路 B 扱いで上書き再生成
-        gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > docs/temp/pr-body.md
+        # `>` は実行前に truncate するので、成功を確認してから確定させる
+        gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > docs/temp/pr-body.md.tmp \
+            || 取得失敗として停止 (下記参照)
+        mv docs/temp/pr-body.md.tmp docs/temp/pr-body.md
         echo "$N" > "$OWN_MARK_FILE"
         OWNED_BODY_FILE=True
 else:
     # ファイル無し → 経路 B
-    gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > docs/temp/pr-body.md
+    gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > docs/temp/pr-body.md.tmp \
+        || 取得失敗として停止 (下記参照)
+    mv docs/temp/pr-body.md.tmp docs/temp/pr-body.md
     echo "$N" > "$OWN_MARK_FILE"
     OWNED_BODY_FILE=True         # 本 skill が作った → Step 8 で rm
 ```
@@ -276,11 +281,16 @@ else:
 なので PR 本文には一切影響しない (HTML コメントすら残らない)。
 
 **`gh pr view` の取得は必ず成否を確認する**: 失敗 (認証切れ / ネットワーク /
-API エラー) するとリダイレクトで空ファイルができ、Step 0.4 の
+API エラー) すると `>` のリダイレクトが空ファイルを作り、Step 0.4 の
 `BROWSER_TEST_DONE` 判定が「未実施」に倒れるうえ、Step 4.5 の
-`gh pr edit --body-file` が **PR 本文を空で上書きする**。空ファイルを
-そのまま使わず、失敗したらリトライするか、解消できなければ skill を停止
-してユーザーに報告する。
+`gh pr edit --body-file` が **PR 本文を空で上書きする**。上のように一時
+ファイルへ書いて **`gh` の終了ステータスが 0 のときだけ `mv` で確定**させ、
+失敗したらリトライし、解消できなければ skill を停止してユーザーに報告する
+(停止する前に `docs/temp/pr-body.md.tmp` は削除して残置しない)。
+
+判定材料は **終了ステータスであって「本文が空かどうか」ではない**。本文が空の
+PR (ad-hoc 作成 / bot PR 等) は正常系なので、空だからといって取得失敗と扱わない
+(扱うと正常な PR のレビューが始められなくなる)。
 
 `OWNED_BODY_FILE` フラグは Step 8 のクリーンアップ判定でのみ使う。
 Step 4.5 のファイル編集ロジックは両経路で共通。Step 8 では
@@ -322,14 +332,26 @@ else:
     # - 判定材料は Step 0.3 が用意した docs/temp/pr-body.md を読むだけにする。
     #   gh を再度呼ばないので「取得失敗を False (= 未実施) と誤認する」経路が
     #   そもそも生まれない (取得の成否は Step 0.3 で確認済み)
-    # - パイプを使わない。`gh ... | grep -q` の形は pipefail 下で grep -q の
-    #   早期終了が上流を SIGPIPE (141) で落とし、一致しているのに False へ
-    #   反転しうる
+    # - **`grep -q` をパイプの末尾に置かない**。`grep -q` は一致した時点で終了
+    #   するため上流が SIGPIPE (141) で落ち、pipefail 下ではパイプライン全体が
+    #   非 0 = 「一致しているのに False」へ反転する。抽出結果を一度変数に取り、
+    #   grep へは here-string で渡す (前段の sed | awk は awk が入力を読み切る
+    #   ので早期終了しない)
     # - 人が手編集した本文も拾えるよう、行頭インデント / `[X]` / 全角コロンを許容
-    if grep -qE '^[[:space:]]*- \[[xX]\] ブラウザテスト[:：]' docs/temp/pr-body.md:
-        BROWSER_TEST_DONE = True
-    else:
-        BROWSER_TEST_DONE = False
+    # - 判定対象は `## Test plan` 以降に限り、code fence 内は除外する。本 skill 群
+    #   自身を改修する PR は本文に証跡行のテンプレートを引用しがちで、それを
+    #   実施済と誤認しないため
+    # ↓ ここは verbatim 実行を意図した実シェル (下記「注意事項」の疑似コード例外)
+    # 順序が重要: **先に fence を除去してから** Test plan セクションを切り出す。
+    # 逆順にすると fence 内に引用された `## Test plan` が起点に選ばれ、
+    # 引用中の証跡行を拾ってしまう
+    TEST_PLAN=$(awk '/^```/ { fence = !fence; next } !fence' docs/temp/pr-body.md \
+                | sed -n '/^## Test plan/,$p')
+    if grep -qE '^[[:space:]]*- \[[xX]\] ブラウザテスト[:：]' <<< "$TEST_PLAN"; then
+        BROWSER_TEST_DONE=True
+    else
+        BROWSER_TEST_DONE=False
+    fi
 REBASED_THIS_ITERATION = False   # Step 1 で毎巡先頭に再代入されるが、全 MODE 共通
                                   # 変数として未定義参照リスクの根絶のため init
 ```
@@ -918,6 +940,9 @@ if BROWSER_TEST_DONE  # Step 0.4 で判定: PR 本文の Test plan に
     AND (a または b または c または d):
     全ケースを再走査
     失敗したら ESCALATE_REASON = "browser-regression" を立てて Step 7 へ進む
+    # 既存の `- [x] ブラウザテスト: ... OK` 行は判定キーなので消さない。
+    # 代わりに `- [ ] ブラウザテスト再走査: 回帰検出 ({内容})` を Test plan へ
+    # 追記する (OK 行だけが残ると「ブラウザテスト OK」と読める虚偽表示になる)
 ```
 
 以下は完全 skip (= 正常な終了パス、escalate しない):
@@ -1402,8 +1427,8 @@ Step 5 を参照。判定の skip 判断は不要。条件が false でも実施
 - 本 skill 内の `bash` 言語タグ付き code block は原則 **LLM 向け疑似コード**
   (Python 風 `if [ ... ]:` / `else:` 等を許容)。実行可能な shell スクリプト
   ではない。実機実行する箇所は親エージェントが個別に `bash` ツールで実行
-  する責務。**例外: Step 8「孤児 worktree の防御的 sweep」のブロックのみは
-  verbatim 実行を意図した実シェル** (当該節に明記)
+  する責務。**例外: Step 8「孤児 worktree の防御的 sweep」と Step 0.4 の
+  `BROWSER_TEST_DONE` 判定は verbatim 実行を意図した実シェル** (各節に明記)
 - `review-pr` 自身を **Skill ツール経由で呼ぶ** ことは可能 (create-pr Step 6
   の委譲経路) で、その場合 `review-pr` 本体は親と同一コンテキストで走る。
   これがバイアスを生まないのは、本 skill が「コードを書いた本人がレビュー
