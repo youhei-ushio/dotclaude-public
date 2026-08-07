@@ -260,12 +260,17 @@ if [ -f docs/temp/pr-body.md ]:
                                 # 用意したファイル → 最後の rm は呼び出し元
     else:
         # sidecar 無し / 別 PR のゴミファイル → 経路 B 扱いで上書き再生成
-        gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > docs/temp/pr-body.md
+        # `>` は実行前に truncate するので、成功を確認してから確定させる
+        gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > docs/temp/pr-body.md.tmp \
+            || 取得失敗として停止 (下記参照)
+        mv docs/temp/pr-body.md.tmp docs/temp/pr-body.md
         echo "$N" > "$OWN_MARK_FILE"
         OWNED_BODY_FILE=True
 else:
     # ファイル無し → 経路 B
-    gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > docs/temp/pr-body.md
+    gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > docs/temp/pr-body.md.tmp \
+        || 取得失敗として停止 (下記参照)
+    mv docs/temp/pr-body.md.tmp docs/temp/pr-body.md
     echo "$N" > "$OWN_MARK_FILE"
     OWNED_BODY_FILE=True         # 本 skill が作った → Step 8 で rm
 ```
@@ -274,6 +279,18 @@ else:
 `echo "$N" > docs/temp/.pr-body.owner` を実行する規約とする。両 skill
 共通のフォーマットにすることで、所有権判定が確実になる。sidecar 方式
 なので PR 本文には一切影響しない (HTML コメントすら残らない)。
+
+**`gh pr view` の取得は必ず成否を確認する**: 失敗 (認証切れ / ネットワーク /
+API エラー) すると `>` のリダイレクトが空ファイルを作り、Step 0.4 の
+`BROWSER_TEST_DONE` 判定が「未実施」に倒れるうえ、Step 4.5 の
+`gh pr edit --body-file` が **PR 本文を空で上書きする**。上のように一時
+ファイルへ書いて **`gh` の終了ステータスが 0 のときだけ `mv` で確定**させ、
+失敗したらリトライし、解消できなければ skill を停止してユーザーに報告する
+(停止する前に `docs/temp/pr-body.md.tmp` は削除して残置しない)。
+
+判定材料は **終了ステータスであって「本文が空かどうか」ではない**。本文が空の
+PR (ad-hoc 作成 / bot PR 等) は正常系なので、空だからといって取得失敗と扱わない
+(扱うと正常な PR のレビューが始められなくなる)。
 
 `OWNED_BODY_FILE` フラグは Step 8 のクリーンアップ判定でのみ使う。
 Step 4.5 のファイル編集ロジックは両経路で共通。Step 8 では
@@ -304,13 +321,70 @@ if MODE == "review-only":
     BROWSER_TEST_DONE = False   # review-only は Step 5 自体 skip するため使わないが、
                                 # 未定義参照リスク根絶のため明示的に False で初期化
 else:
-    # fix モード: PR 本文に「## 動作確認スクリーンショット」セクションが
-    # あれば create-pr Step 3 で初回ブラウザテストを実施済 → True
-    BROWSER_TEST_DONE=$(gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body \
-                        | grep -qF '## 動作確認スクリーンショット' && echo True || echo False)
+    # fix モード: create-pr Step 3 がブラウザテストを実施すると PR 本文の
+    # Test plan に「- [x] ブラウザテスト: ... OK」の 1 行が残る (create-pr
+    # Step 3「証跡はコミットせず、テキスト 1 行で記録する」項の規約)。この
+    # **テキスト証跡** の有無で初回実施済かを判定する。
+    # - スクリーンショットは PR に掲載しない方針なので、判定キーを画像セクション
+    #   ではなくテキスト 1 行に置く (リポジトリを肥大化させずに証跡を残せる)
+    # - Step 3 を skip した場合は `- [ ] ブラウザテスト: skip (...)` を残す規約
+    #   なので、`[x]` のみをマッチさせて skip を実施済と誤認しない
+    # - 判定材料は Step 0.3 が用意した docs/temp/pr-body.md を読むだけにする。
+    #   gh を再度呼ばないので「取得失敗を False (= 未実施) と誤認する」経路が
+    #   そもそも生まれない (取得の成否は Step 0.3 で確認済み)
+    # - 人が手編集した本文も拾えるよう、行頭インデント / `[X]` / 全角コロンを許容
+    # - 判定対象は `## Test plan` 以降に限り、code fence 内は除外する。本 skill 群
+    #   自身を改修する PR は本文に証跡行のテンプレートを引用しがちで、それを
+    #   実施済と誤認しないため
+    BROWSER_TEST_DONE = 直後の「BROWSER_TEST_DONE の判定」ブロックを
+                        verbatim 実行して得る (True / False)
 REBASED_THIS_ITERATION = False   # Step 1 で毎巡先頭に再代入されるが、全 MODE 共通
                                   # 変数として未定義参照リスクの根絶のため init
 ```
+
+##### `BROWSER_TEST_DONE` の判定 (verbatim 実行する実シェル)
+
+**このブロックは疑似コードではなく、そのまま実行する実シェル**。上の `text`
+ブロック (制御変数の初期化) とは性質が異なるため独立させている。
+
+```bash
+# 順序が重要: **先に fence を除去してから** Test plan セクションを切り出す。
+# 逆順にすると fence 内に引用された `## Test plan` が起点に選ばれ、引用中の
+# 証跡行を拾ってしまう。
+# fence 判定は **インデント量を問わず** `~~~` 形式も対象にする。CommonMark の
+# 3 空白上限には合わせない: 箇条書きの深い階層に置かれた fence (証跡行の規約自体が
+# この形で例示される) を取りこぼすと、引用にすぎない行を実施済と誤認するため。
+# 単純なトグルにはしない。開始マーカーの **文字種と長さを記録し、同種かつ同じ長さ
+# 以上の行でだけ閉じる**。skill 自身を改修する PR は「```text で書かれた規約」を
+# 本文へ引用するために外側を ```` で囲む形になりやすく、単純トグルだと内側の ```
+# で fence が閉じたと誤認して引用行を拾う (実測で再現)。
+# 見出しは大文字小文字と空白の揺れ (`## Test Plan` 等) を許容する。
+TEST_PLAN=$(awk '
+              match($0, /^[[:space:]]*(`{3,}|~{3,})/) {
+                  m = substr($0, RSTART, RLENGTH); sub(/^[[:space:]]*/, "", m)
+                  if (!fence) { fence = 1; marker = m; next }
+                  if (substr(m, 1, 1) == substr(marker, 1, 1) && length(m) >= length(marker)) {
+                      fence = 0; marker = ""; next
+                  }
+              }
+              !fence
+            ' docs/temp/pr-body.md \
+            | sed -n '/^##[[:space:]]*[Tt]est[[:space:]]*[Pp]lan/,$p')
+# **`grep -q` をパイプの末尾に置かない**。`grep -q` は一致した時点で終了するため
+# 上流が SIGPIPE (141) で落ち、pipefail 下ではパイプライン全体が非 0 =
+# 「一致しているのに False」へ反転する。抽出結果を一度変数に取り here-string で渡す
+# (上のパイプは後段の sed が `,$p` で EOF まで読むので早期終了しない)。
+if grep -qE '^[[:space:]]*- \[[xX]\] ブラウザテスト[:：]' <<< "$TEST_PLAN"; then
+    BROWSER_TEST_DONE=True
+else
+    BROWSER_TEST_DONE=False
+fi
+```
+
+**移行時の注意**: 旧規約 (`## 動作確認スクリーンショット` セクション) で作られた
+in-flight の PR は証跡行を持たないため `BROWSER_TEST_DONE=False` になり、Step 5 の
+再走査が skip される (安全側の失敗)。再走査させたい場合は Test plan に
+`- [x] ブラウザテスト: {検証したケース} OK` の 1 行を手で足す。
 
 **review-only モードの ITER_MAX が 1 である理由**: 修正をかけずに reviewer
 を再起動しても、新しい情報が無いので findings は本質的に同じになる
@@ -796,6 +870,17 @@ else:
 - escalate 直行経路で commit 無しの場合: `### N 巡目 (commit なし、escalate
   中断 / 理由: $ESCALATE_REASON)`
 - Test plan のチェック状態も最新化 (完了項目は `[x]`)
+- **例外: `- [x] ブラウザテスト:` / `- [ ] ブラウザテスト: skip (...)` /
+  `- [ ] ブラウザテスト再走査: ...` の行は原文のまま保持する**。前 2 者は
+  Step 0.4 の `BROWSER_TEST_DONE` 判定キーなので、削除・書式変更したり skip の
+  `[ ]` を「未完了だから最新化」で `[x]` に反転させたりしてはならない (前者は
+  Step 5 の再走査が二度と走らなくなり、後者は dev server が起動できなかった PR で
+  再走査を試みる)。再走査行は回帰の記録なので、`[x]` に反転させると回帰が隠れる
+  - **解除条項**: 後続巡の Step 5 で再走査が全 PASS したときのみ、
+    `- [ ] ブラウザテスト再走査: 回帰検出 (...)` を
+    `- [x] ブラウザテスト再走査: 回帰解消 ({内容})` に **置換してよい**。
+    これが無いと、回帰を一度検出した PR は修正後も未解決の回帰行を持ち続け、
+    グリーンな PR が「回帰未解消」と読める逆向きの虚偽表示になる
 
 ```bash
 gh pr edit "$N" --repo "$OWNER_REPO" --body-file docs/temp/pr-body.md
@@ -885,17 +970,25 @@ UI 影響あり判定 (いずれか満たせば再走査)。**下記パターン
   末尾のパスは自プロジェクトのビューディレクトリに置き換える。例: Rails `app/views/**`、Vue `src/**`)
 
 ```text
-if BROWSER_TEST_DONE  # Step 0.4 で判定: PR 本文に「動作確認スクリーン
-                      # ショット」セクションがあれば True (経路 A/B 共通)
+if BROWSER_TEST_DONE  # Step 0.4 で判定: PR 本文の Test plan に
+                      # 「- [x] ブラウザテスト: ...」の 1 行があれば True
+                      # (経路 A/B 共通)
     AND (a または b または c または d):
     全ケースを再走査
-    失敗したら ESCALATE_REASON = "browser-regression" を立てて Step 7 へ進む
+    失敗したら:
+        # 既存の `- [x] ブラウザテスト: ... OK` 行は判定キーなので消さない。
+        # 代わりに `- [ ] ブラウザテスト再走査: 回帰検出 ({内容})` を Test plan へ
+        # 追記する (OK 行だけが残ると「ブラウザテスト OK」と読める虚偽表示になる)
+        docs/temp/pr-body.md に上記 1 行を追記し、**GitHub に反映する**:
+            gh pr edit "$N" --repo "$OWNER_REPO" --body-file docs/temp/pr-body.md
+        (Step 4.5 の投稿は追記前なので、ここで再投稿しないと本文に載らない)
+        ESCALATE_REASON = "browser-regression" を立てて Step 7 へ進む
 ```
 
 以下は完全 skip (= 正常な終了パス、escalate しない):
 
-- `BROWSER_TEST_DONE == False` (画面変更なし判定で初回もブラウザテスト
-  未実施だった PR、経路 A/B 共通)
+- `BROWSER_TEST_DONE == False` (Test plan にブラウザテスト実施の 1 行が無い
+  = 初回もブラウザテスト未実施 / skip だった PR、経路 A/B 共通)
 - 今巡の auto-fix が typo / import 整理など UI に無関係なもののみ
 
 ### Step 6: 巡数判定とループ継続
@@ -1365,7 +1458,7 @@ Step 5 を参照。判定の skip 判断は不要。条件が false でも実施
   時はユーザーがそのまま手元で次操作する想定で awaiting 化不要
 - frontmatter `allowed-tools` の `mcp__playwright__*` は **Step 5 の
   ブラウザテスト再走査用**。実起動の条件は `BROWSER_TEST_DONE == True`
-  (= PR 本文に `## 動作確認スクリーンショット` セクションあり) かつ
+  (= PR 本文 Test plan に `- [x] ブラウザテスト: ...` の 1 行あり) かつ
   Step 5 UI 影響あり判定 (a)/(b)/(c)/(d) のいずれか。経路 A (create-pr 経由)
   で初回ブラウザテスト実施済の PR が主想定だが、経路 B (ad-hoc) でも判定
   キーが満たされれば起動する (allowed-tools での ACL は経路を区別しない)。
@@ -1374,8 +1467,9 @@ Step 5 を参照。判定の skip 判断は不要。条件が false でも実施
 - 本 skill 内の `bash` 言語タグ付き code block は原則 **LLM 向け疑似コード**
   (Python 風 `if [ ... ]:` / `else:` 等を許容)。実行可能な shell スクリプト
   ではない。実機実行する箇所は親エージェントが個別に `bash` ツールで実行
-  する責務。**例外: Step 8「孤児 worktree の防御的 sweep」のブロックのみは
-  verbatim 実行を意図した実シェル** (当該節に明記)
+  する責務。**例外: Step 8「孤児 worktree の防御的 sweep」と Step 0.4 の
+  「`BROWSER_TEST_DONE` の判定」は verbatim 実行を意図した実シェル**。いずれも
+  疑似コードと混在させず独立した `bash` fence に切り出し、各節に明記している
 - `review-pr` 自身を **Skill ツール経由で呼ぶ** ことは可能 (create-pr Step 6
   の委譲経路) で、その場合 `review-pr` 本体は親と同一コンテキストで走る。
   これがバイアスを生まないのは、本 skill が「コードを書いた本人がレビュー

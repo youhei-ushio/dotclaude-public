@@ -110,7 +110,10 @@ rebase 後の push は Step 4 で `--force-with-lease` を使う。
 
 以下のいずれかに該当すれば **必ず実施** (判定の skip は禁止):
 
-1. **test plan / PR 本文素案にブラウザ系キーワード**: `ブラウザ` / `画面` / `UI` / `Playwright` / `画面遷移` / `ボタン` / `表示` (使用フレームワーク名があれば併せて加える)
+1. **test plan / PR 本文素案にブラウザ系キーワード**: `ブラウザ` / `画面` / `UI` / `Playwright` / `画面遷移` / `ボタン` / `表示` / `印刷` / `帳票` (使用フレームワーク名があれば併せて加える)
+   - `印刷` / `帳票` が該当する場合は、通常画面に加えて **印刷レイアウト (印刷用 CSS の適用状態) も確認対象に含める**
+     - **`window.print()` は呼ばない**: 印刷ダイアログ (モーダル) が開いて JS スレッドと以降の MCP 操作をブロックするうえ、印刷用 CSS の検証にもならない
+     - `browser_evaluate` で `matchMedia('print').matches` や `@media print` 指定の stylesheet の適用状態を確認する / 印刷用 stylesheet の `media` を一時的に `all` に切り替えて画面上で目視する
 2. **diff に画面ファイル**: ビュー / フロントエンドコンポーネントの変更
    - 例 (自プロジェクトの構成に読み替え): `*.vue`, `*.tsx`, `*.jsx`, `*.svelte`, `resources/views/**`, `resources/js/**`, `src/**` のコンポーネント、テンプレートエンジンのビューファイル等
 
@@ -124,16 +127,35 @@ git diff --name-only "$BASE"...HEAD | grep -E '\.(vue|tsx|jsx|svelte)$|^(resourc
 #### 実行
 
 1. **dev server 起動確認**: プロジェクト固有の起動コマンドは CLAUDE.md / `.env` / `docker-compose.yml` / `package.json` 等を確認して判断。停止していたら起動する
-   - 起動コマンドが特定できない / 3 回試行しても URL に到達できない場合は、**Step 3 全体を skip し、その旨を Step 7 の最終報告で明示**。skill 全体は escalate せず通常フローを継続
+   - 起動コマンドが特定できない / 3 回試行しても URL に到達できない場合は、**Step 3 全体を skip し、その旨を Step 7 の最終報告で明示**。skill 全体は escalate せず通常フローを継続。あわせて Step 5 の本文で Test plan に `- [ ] ブラウザテスト: skip ({理由})` を残す (項番 6 参照)
 2. **URL 推測 → 検証**: test plan 項目 + 変更画面 (ルーティング定義から逆引き) で `mcp__playwright__browser_navigate`
 3. **操作・検証**: 必要に応じて `mcp__playwright__browser_click` / `browser_type` / `browser_snapshot`
 4. **テストデータ作成も OK**: 検証に必要ならプロジェクトの seeder / factory / 直接 DB 投入で作成して良い。**ただし本番系 / 破壊的操作 (truncate / drop / DB 全リセット等) は禁止**
 5. **失敗時のリトライ**:
    - 1 件でも失敗したら **修正してリトライ**
    - **同一ケースが** 3 回連続失敗したら **ユーザーに報告して停止** (別ケースの失敗とは合算しない)
-6. **証跡の保存**:
-   - 全成功したらスクリーンショットを `docs/images/` に保存
-   - PR 本文の「動作確認スクリーンショット」セクションに自動引用 (`?raw=true` 形式)
+6. **証跡はコミットせず、テキスト 1 行で記録する**:
+   - 検証は画面の目視確認までとし、スクリーンショットを `docs/images/` にコミット
+     したり PR 本文へ貼ったりしない (対応のたびに `docs/images/` が肥大化するため
+     廃止)。撮影する場合もリポジトリ外の一時パスへ出力する
+     - **対象外**: `create-manual` が作る顧客向けマニュアル本体の埋め込み画像は
+       成果物そのものなので従来どおりコミットする (詳細は Step 5 の禁止ルール)
+   - 代わりに **PR 本文の Test plan へ次の 1 行を必ず残す**:
+
+     ```text
+     - [x] ブラウザテスト: {検証したケース} OK (スクリーンショットは非掲載)
+     ```
+
+     この行は `review-pr` Step 0.4 が「初回実施済か」の判定キーに使い、Step 5 の
+     ブラウザテスト再走査を起動するかを決めるため、**書式を崩さない**
+     (行頭 `- [x] ブラウザテスト:`)。印刷プレビューも確認した場合は
+     `{検証したケース}` にその旨を含める
+   - **記録の有無は 3 通りに分ける** (Step 5 の本文作成時に反映する):
+     - 実施して全成功: `- [x] ブラウザテスト: {検証したケース} OK (スクリーンショットは非掲載)`
+     - Step 3 に入ったが skip (項番 1 の dev server 起動不可等):
+       `- [ ] ブラウザテスト: skip ({理由})` — 未チェックのままにして実施済と誤認させない
+     - 上記「実施判定」が false で Step 3 に入らなかった: **行そのものを書かない**
+       (書くと人間のレビュアーには未完タスクに見えるため)
 
 ### Step 4: リモートへプッシュ
 
@@ -169,14 +191,26 @@ PR 本文に `##` などの `#` で始まる行が含まれると、Claude Code 
 ```bash
 # Write ツールで docs/temp/pr-body.md を作成
 # ↓
-gh pr create --title "<タイトル>" --body-file docs/temp/pr-body.md
+gh pr create --title "{タイトル}" --body-file docs/temp/pr-body.md
 # ↓
-rm docs/temp/pr-body.md  # クリーンアップは Step 8
+# 所有権 sidecar を残す (review-pr Step 0.3 がこれを見て「呼び出し元が用意した
+# ファイル」と判定し、上書き再取得せずそのまま使う)
+echo "{PR 番号}" > docs/temp/.pr-body.owner
+# ここでは rm しない。Step 6.4.5 / 6.5 と review-pr Step 0.4 が本ファイルを使う。
+# 削除は Step 8 でまとめて行う
 ```
 
 #### PR 本文フォーマット
 
 - タイトルは 70 文字以内
+- **検証スクリーンショットは PR に掲載しない** (Issue 対応か否かを問わず全 PR 共通):
+  `docs/images/` へのコミットや `?raw=true` 形式での引用は行わない（対応のたびに
+  `docs/images/` が肥大化するため廃止）。画面確認は Step 3 のブラウザテストで
+  実施し、結果は Test plan にテキスト 1 行で記録する（Step 3「証跡はコミットせず、
+  テキスト 1 行で記録する」項）
+  - **対象外**: `create-manual` が作る顧客向けマニュアル本体の埋め込み画像
+    （`docs/images/issue-<number>/*.png` を `?raw=true` で参照）は、検証証跡では
+    なく成果物そのものなので従来どおりコミットする
 
 ##### 基本フォーマット
 
@@ -186,9 +220,19 @@ rm docs/temp/pr-body.md  # クリーンアップは Step 8
 
 ## Test plan
 - [ ] テスト項目
+- [x] ブラウザテスト: {検証したケース} OK (スクリーンショットは非掲載)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
+
+Test plan の **ブラウザテスト行** は **Step 3 でブラウザテストを実施した場合のみ**
+入れる。Step 3 に入ったが skip した場合は `- [ ] ブラウザテスト: skip ({理由})` に
+置き換え、Step 3 の実施判定が false で入らなかった場合は行ごと省く。
+`review-pr` Step 0.4 がこの行を判定キーに使うので書式を崩さない。**この規約は
+下の「Issue 対応時」テンプレートにも同じく適用する**。
+
+テンプレート内には注記を書かない。証跡行はバイト一致で判定されるため、注記が
+残ると本文にそのまま混入する。
 
 ##### Issue 対応時の追加ルール
 
@@ -196,9 +240,6 @@ rm docs/temp/pr-body.md  # クリーンアップは Step 8
 - 成果物にドキュメント（設計資料、仕様書、ADR 等）が含まれる場合は「成果物リンク」セクションを追加
   - リンク形式: `https://github.com/<owner>/<repo>/blob/<branch>/<path>`
   - drawio や SVG ファイルは Markdown に埋め込まれているためリンク不要
-- 印刷物がある場合は「印刷イメージ」セクションにスクリーンショットを掲載
-  - スクリーンショットは `docs/images/` 配下にコミットし、`https://github.com/<owner>/<repo>/blob/<branch>/<path>?raw=true` 形式の URL で参照（`?raw=true` はプライベートリポジトリでの画像直リンクに必須。public repo でも害はないので一律この形式で良い）
-- Step 3 でブラウザテストを実施した場合、「動作確認スクリーンショット」セクションに同形式でスクリーンショットを掲載
 
 ```markdown
 ## Summary
@@ -207,17 +248,12 @@ rm docs/temp/pr-body.md  # クリーンアップは Step 8
 ## 成果物リンク
 （ドキュメント成果物がある場合のみ）
 
-## 印刷イメージ
-（印刷するものがある場合のみ）
-
-## 動作確認スクリーンショット
-（Step 3 でブラウザテスト実施した場合）
-
 ## 対応履歴
 （Step 6 セルフレビュー実施後、毎巡 Step 6.4.5 で追加・更新する。実施前は省略）
 
 ## Test plan
-- テスト内容
+- [ ] テスト内容
+- [x] ブラウザテスト: {検証したケース} OK (スクリーンショットは非掲載)
 
 Closes #<issue 番号>
 
@@ -494,7 +530,7 @@ while iteration <= 5:
         break  # レビュー OK、ループ終了
 
     auto-fix を全件実装 (Edit / Write)
-    git add <変更ファイル>
+    git add <変更ファイル>   # docs/temp/ 配下は絶対に add しない (下記)
     # commit message はプロジェクトの規約に合わせる
     # (日本語 OK のリポなら日本語、英語規約なら英語)
     git commit -m "chore: <iteration> 巡目レビュー指摘反映"
@@ -513,8 +549,15 @@ while iteration <= 5:
       - 「対応履歴」セクションを追加または更新し、今巡の auto-fix / escalate /
         silent-reject の件数と主な内訳を 3-5 行で要約
       - Test plan のチェック状態も最新化 (完了項目は [x])
+      - 例外: 「- [x] ブラウザテスト:」「- [ ] ブラウザテスト: skip (...)」
+        「- [ ] ブラウザテスト再走査: ...」の行は原文のまま保持する
+        (review-pr Step 0.4 の判定キー / 回帰の記録。削除・書式変更や
+        [ ] → [x] 反転をしない)
+      - 解除条項: 後続巡の 6.5 で再走査が全 PASS したときのみ、回帰行を
+        「- [x] ブラウザテスト再走査: 回帰解消 ({内容})」に置換してよい
+        (これが無いと、修正後もグリーンな PR が「回帰未解消」と読める)
     gh pr edit {N} --body-file docs/temp/pr-body.md
-    rm docs/temp/pr-body.md
+    # rm はしない。6.5 が回帰時に本文へ追記するため残す (削除は Step 8)
 
     # 6.5 ブラウザテストの再走査 (UI 影響のある修正のときのみ)
     # 判定対象は今巡 (= 直近 commit) で変更されたファイルのみ:
@@ -527,9 +570,23 @@ while iteration <= 5:
     #       diff 内で目視確認 (`class=` または ` class:` の変更行あり)
     if Step 3 で実施していた AND (a または b または c または d):
         全ケースを再走査
-        失敗したら escalate して Step 7 に進む
+        失敗したら:
+            # 既存の「- [x] ブラウザテスト: ... OK」行は判定キーなので消さず、
+            # 「- [ ] ブラウザテスト再走査: 回帰検出 ({内容})」を Test plan へ追記する
+            # (OK 行だけが残ると「ブラウザテスト OK」と読める虚偽表示になる)
+            docs/temp/pr-body.md に上記 1 行を追記
+              # 6.4.5 で消していないので通常は存在する。
+              # 無い場合の再生成は **裸のリダイレクトで書かない**:
+              #   gh pr view {N} --json body -q .body > docs/temp/pr-body.md.tmp \
+              #       || 再生成を諦める (下記)
+              #   mv docs/temp/pr-body.md.tmp docs/temp/pr-body.md
+              # 取得に失敗したら本文更新は行わず (空ファイルで PR 本文を
+              # 空に上書きする事故を避ける)、回帰内容は Step 7 の最終報告に
+              # 書いて escalate する
+            gh pr edit {N} --body-file docs/temp/pr-body.md   # 追記を GitHub に反映
+            escalate して Step 7 に進む
     # 以下は完全 skip (= 正常な終了パス、escalate しない):
-    # - Step 3 を未実施だった PR (画面変更なし判定)
+    # - Step 3 を実施しなかった PR (実施判定が false / dev server 起動不可で skip)
     # - 今巡の auto-fix が typo / import 整理など UI に無関係なもののみ
 
     iteration += 1
@@ -558,10 +615,16 @@ while iteration <= 5:
 ### Step 8: クリーンアップ
 
 ```bash
-rm docs/temp/pr-body.md
+rm -f docs/temp/pr-body.md docs/temp/.pr-body.owner
 ```
 
 `docs/temp/` に他のファイルがある場合があるため、**ディレクトリごと削除しない**。
+Step 5 で作った所有権 sidecar (`.pr-body.owner`) も本文ファイルと対で削除する。
+別 PR の残置は `review-pr` Step 0.3 が PR 番号照合で弾く (経路 B に落ちる) ので
+無害だが、**同一 PR 番号のまま残置すると危険**: 本 skill が Step 8 到達前に異常
+終了した後で `review-pr {同じ N}` を単独起動すると経路 A と判定され、GitHub から
+再取得せずに古いローカル下書きを使い、`gh pr edit --body-file` でライブ本文を
+巻き戻す (しかも `OWNED_BODY_FILE=False` なので後片付けもされない)。
 
 PR 完成後は Step 7 の最終報告 (PR URL / 巡数 / ブラウザテスト結果 / escalate
 内容 / コミット履歴概要) をユーザーに返して終了する。
@@ -588,19 +651,21 @@ skill が「ユーザー確認を取って停止する」のは以下のとき�
 
 ## ブラウザテスト実施判定基準
 
-以下のいずれかが true なら **必ず実施**:
+**正典は Step 3「実施判定 (OR 条件)」**。キーワード一覧と diff パターンをここに複製
+すると片方だけ更新されて食い違うため、Step 3 を参照する。
 
-- PR 本文 (素案でも可) / test plan / 変更ファイル名・パス に画面系キーワード (`ブラウザ` / `画面` / `UI` / `Playwright` / `画面遷移` / `ボタン` / `表示`、使用フレームワーク名) が出現
-- diff にビュー / フロントエンドコンポーネントファイル (例: `.vue`, `.tsx`, `.jsx`, `.svelte`, `resources/views/**`, `resources/js/**`, `src/**` のコンポーネント。自プロジェクトの構成に読み替え) が含まれる
-
-判定の skip 判断は不要。両条件が false でも実施したほうが安心な場合は実施して構わない。
+判定の skip 判断は不要。条件が false でも実施したほうが安心な場合は実施して構わない。
 
 ---
 
 ## 注意事項
 
 - push は必ず `gh` 経由 (SSH 鍵なし)。`gh auth setup-git` を先に走らせる
-- `docs/temp/` は `.gitignore` 対象外なので Step 8 で必ず掃除
+- `docs/temp/` は `.gitignore` 対象外なので Step 8 で必ず掃除。Step 5 で
+  `pr-body.md` / `.pr-body.owner` を残すようになったため Step 6.4 のコミット時点で
+  両ファイルが存在する。**`git add -A` / `git add .` のような一括 add は使わず、
+  変更ファイルを明示して add する**（一時ファイルと sidecar が PR に混入する）。
+  配布先プロジェクトでは `.gitignore` に `docs/temp/` を入れておくとより安全
 - PR 本文を `--body` で直接渡す方法は使わない (`#` 行問題)
 - rebase 後の push は `--force-with-lease` (`--force` は禁止)
 - セルフレビューループ中の commit message は短くて良い (`chore: <N> 巡目レビュー指摘反映` 等)、プロジェクトの commit 規約 (日本語 / 英語) に合わせる。squash は後で人がやる
