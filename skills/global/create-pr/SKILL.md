@@ -530,7 +530,7 @@ while iteration <= 5:
         break  # レビュー OK、ループ終了
 
     auto-fix を全件実装 (Edit / Write)
-    git add <変更ファイル>
+    git add <変更ファイル>   # docs/temp/ 配下は絶対に add しない (下記)
     # commit message はプロジェクトの規約に合わせる
     # (日本語 OK のリポなら日本語、英語規約なら英語)
     git commit -m "chore: <iteration> 巡目レビュー指摘反映"
@@ -553,6 +553,9 @@ while iteration <= 5:
         「- [ ] ブラウザテスト再走査: ...」の行は原文のまま保持する
         (review-pr Step 0.4 の判定キー / 回帰の記録。削除・書式変更や
         [ ] → [x] 反転をしない)
+      - 解除条項: 後続巡の 6.5 で再走査が全 PASS したときのみ、回帰行を
+        「- [x] ブラウザテスト再走査: 回帰解消 ({内容})」に置換してよい
+        (これが無いと、修正後もグリーンな PR が「回帰未解消」と読める)
     gh pr edit {N} --body-file docs/temp/pr-body.md
     # rm はしない。6.5 が回帰時に本文へ追記するため残す (削除は Step 8)
 
@@ -572,7 +575,14 @@ while iteration <= 5:
             # 「- [ ] ブラウザテスト再走査: 回帰検出 ({内容})」を Test plan へ追記する
             # (OK 行だけが残ると「ブラウザテスト OK」と読める虚偽表示になる)
             docs/temp/pr-body.md に上記 1 行を追記
-              (6.4.5 で消していないので存在する。無ければ gh pr view で再生成)
+              # 6.4.5 で消していないので通常は存在する。
+              # 無い場合の再生成は **裸のリダイレクトで書かない**:
+              #   gh pr view {N} --json body -q .body > docs/temp/pr-body.md.tmp \
+              #       || 再生成を諦める (下記)
+              #   mv docs/temp/pr-body.md.tmp docs/temp/pr-body.md
+              # 取得に失敗したら本文更新は行わず (空ファイルで PR 本文を
+              # 空に上書きする事故を避ける)、回帰内容は Step 7 の最終報告に
+              # 書いて escalate する
             gh pr edit {N} --body-file docs/temp/pr-body.md   # 追記を GitHub に反映
             escalate して Step 7 に進む
     # 以下は完全 skip (= 正常な終了パス、escalate しない):
@@ -609,8 +619,12 @@ rm -f docs/temp/pr-body.md docs/temp/.pr-body.owner
 ```
 
 `docs/temp/` に他のファイルがある場合があるため、**ディレクトリごと削除しない**。
-Step 5 で作った所有権 sidecar (`.pr-body.owner`) も本文ファイルと対で削除する
-(残すと次回別 PR で `review-pr` Step 0.3 が経路 A と誤判定する)。
+Step 5 で作った所有権 sidecar (`.pr-body.owner`) も本文ファイルと対で削除する。
+別 PR の残置は `review-pr` Step 0.3 が PR 番号照合で弾く (経路 B に落ちる) ので
+無害だが、**同一 PR 番号のまま残置すると危険**: 本 skill が Step 8 到達前に異常
+終了した後で `review-pr {同じ N}` を単独起動すると経路 A と判定され、GitHub から
+再取得せずに古いローカル下書きを使い、`gh pr edit --body-file` でライブ本文を
+巻き戻す (しかも `OWNED_BODY_FILE=False` なので後片付けもされない)。
 
 PR 完成後は Step 7 の最終報告 (PR URL / 巡数 / ブラウザテスト結果 / escalate
 内容 / コミット履歴概要) をユーザーに返して終了する。
@@ -647,7 +661,11 @@ skill が「ユーザー確認を取って停止する」のは以下のとき�
 ## 注意事項
 
 - push は必ず `gh` 経由 (SSH 鍵なし)。`gh auth setup-git` を先に走らせる
-- `docs/temp/` は `.gitignore` 対象外なので Step 8 で必ず掃除
+- `docs/temp/` は `.gitignore` 対象外なので Step 8 で必ず掃除。Step 5 で
+  `pr-body.md` / `.pr-body.owner` を残すようになったため Step 6.4 のコミット時点で
+  両ファイルが存在する。**`git add -A` / `git add .` のような一括 add は使わず、
+  変更ファイルを明示して add する**（一時ファイルと sidecar が PR に混入する）。
+  配布先プロジェクトでは `.gitignore` に `docs/temp/` を入れておくとより安全
 - PR 本文を `--body` で直接渡す方法は使わない (`#` 行問題)
 - rebase 後の push は `--force-with-lease` (`--force` は禁止)
 - セルフレビューループ中の commit message は短くて良い (`chore: <N> 巡目レビュー指摘反映` 等)、プロジェクトの commit 規約 (日本語 / 英語) に合わせる。squash は後で人がやる

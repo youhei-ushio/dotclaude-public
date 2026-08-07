@@ -354,8 +354,21 @@ REBASED_THIS_ITERATION = False   # Step 1 で毎巡先頭に再代入される�
 # fence 判定は **インデント量を問わず** `~~~` 形式も対象にする。CommonMark の
 # 3 空白上限には合わせない: 箇条書きの深い階層に置かれた fence (証跡行の規約自体が
 # この形で例示される) を取りこぼすと、引用にすぎない行を実施済と誤認するため。
+# 単純なトグルにはしない。開始マーカーの **文字種と長さを記録し、同種かつ同じ長さ
+# 以上の行でだけ閉じる**。skill 自身を改修する PR は「```text で書かれた規約」を
+# 本文へ引用するために外側を ```` で囲む形になりやすく、単純トグルだと内側の ```
+# で fence が閉じたと誤認して引用行を拾う (実測で再現)。
 # 見出しは大文字小文字と空白の揺れ (`## Test Plan` 等) を許容する。
-TEST_PLAN=$(awk '/^[[:space:]]*(```|~~~)/ { fence = !fence; next } !fence' docs/temp/pr-body.md \
+TEST_PLAN=$(awk '
+              match($0, /^[[:space:]]*(`{3,}|~{3,})/) {
+                  m = substr($0, RSTART, RLENGTH); sub(/^[[:space:]]*/, "", m)
+                  if (!fence) { fence = 1; marker = m; next }
+                  if (substr(m, 1, 1) == substr(marker, 1, 1) && length(m) >= length(marker)) {
+                      fence = 0; marker = ""; next
+                  }
+              }
+              !fence
+            ' docs/temp/pr-body.md \
             | sed -n '/^##[[:space:]]*[Tt]est[[:space:]]*[Pp]lan/,$p')
 # **`grep -q` をパイプの末尾に置かない**。`grep -q` は一致した時点で終了するため
 # 上流が SIGPIPE (141) で落ち、pipefail 下ではパイプライン全体が非 0 =
@@ -863,6 +876,11 @@ else:
   `[ ]` を「未完了だから最新化」で `[x]` に反転させたりしてはならない (前者は
   Step 5 の再走査が二度と走らなくなり、後者は dev server が起動できなかった PR で
   再走査を試みる)。再走査行は回帰の記録なので、`[x]` に反転させると回帰が隠れる
+  - **解除条項**: 後続巡の Step 5 で再走査が全 PASS したときのみ、
+    `- [ ] ブラウザテスト再走査: 回帰検出 (...)` を
+    `- [x] ブラウザテスト再走査: 回帰解消 ({内容})` に **置換してよい**。
+    これが無いと、回帰を一度検出した PR は修正後も未解決の回帰行を持ち続け、
+    グリーンな PR が「回帰未解消」と読める逆向きの虚偽表示になる
 
 ```bash
 gh pr edit "$N" --repo "$OWNER_REPO" --body-file docs/temp/pr-body.md
