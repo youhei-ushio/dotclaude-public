@@ -332,29 +332,46 @@ else:
     # - 判定材料は Step 0.3 が用意した docs/temp/pr-body.md を読むだけにする。
     #   gh を再度呼ばないので「取得失敗を False (= 未実施) と誤認する」経路が
     #   そもそも生まれない (取得の成否は Step 0.3 で確認済み)
-    # - **`grep -q` をパイプの末尾に置かない**。`grep -q` は一致した時点で終了
-    #   するため上流が SIGPIPE (141) で落ち、pipefail 下ではパイプライン全体が
-    #   非 0 = 「一致しているのに False」へ反転する。抽出結果を一度変数に取り、
-    #   grep へは here-string で渡す (前段の sed | awk は awk が入力を読み切る
-    #   ので早期終了しない)
     # - 人が手編集した本文も拾えるよう、行頭インデント / `[X]` / 全角コロンを許容
     # - 判定対象は `## Test plan` 以降に限り、code fence 内は除外する。本 skill 群
     #   自身を改修する PR は本文に証跡行のテンプレートを引用しがちで、それを
     #   実施済と誤認しないため
-    # ↓ ここは verbatim 実行を意図した実シェル (下記「注意事項」の疑似コード例外)
-    # 順序が重要: **先に fence を除去してから** Test plan セクションを切り出す。
-    # 逆順にすると fence 内に引用された `## Test plan` が起点に選ばれ、
-    # 引用中の証跡行を拾ってしまう
-    TEST_PLAN=$(awk '/^```/ { fence = !fence; next } !fence' docs/temp/pr-body.md \
-                | sed -n '/^## Test plan/,$p')
-    if grep -qE '^[[:space:]]*- \[[xX]\] ブラウザテスト[:：]' <<< "$TEST_PLAN"; then
-        BROWSER_TEST_DONE=True
-    else
-        BROWSER_TEST_DONE=False
-    fi
+    BROWSER_TEST_DONE = 直後の「BROWSER_TEST_DONE の判定」ブロックを
+                        verbatim 実行して得る (True / False)
 REBASED_THIS_ITERATION = False   # Step 1 で毎巡先頭に再代入されるが、全 MODE 共通
                                   # 変数として未定義参照リスクの根絶のため init
 ```
+
+##### `BROWSER_TEST_DONE` の判定 (verbatim 実行する実シェル)
+
+**このブロックは疑似コードではなく、そのまま実行する実シェル**。上の `text`
+ブロック (制御変数の初期化) とは性質が異なるため独立させている。
+
+```bash
+# 順序が重要: **先に fence を除去してから** Test plan セクションを切り出す。
+# 逆順にすると fence 内に引用された `## Test plan` が起点に選ばれ、引用中の
+# 証跡行を拾ってしまう。
+# fence 判定は **インデント量を問わず** `~~~` 形式も対象にする。CommonMark の
+# 3 空白上限には合わせない: 箇条書きの深い階層に置かれた fence (証跡行の規約自体が
+# この形で例示される) を取りこぼすと、引用にすぎない行を実施済と誤認するため。
+# 見出しは大文字小文字と空白の揺れ (`## Test Plan` 等) を許容する。
+TEST_PLAN=$(awk '/^[[:space:]]*(```|~~~)/ { fence = !fence; next } !fence' docs/temp/pr-body.md \
+            | sed -n '/^##[[:space:]]*[Tt]est[[:space:]]*[Pp]lan/,$p')
+# **`grep -q` をパイプの末尾に置かない**。`grep -q` は一致した時点で終了するため
+# 上流が SIGPIPE (141) で落ち、pipefail 下ではパイプライン全体が非 0 =
+# 「一致しているのに False」へ反転する。抽出結果を一度変数に取り here-string で渡す
+# (上のパイプは後段の sed が `,$p` で EOF まで読むので早期終了しない)。
+if grep -qE '^[[:space:]]*- \[[xX]\] ブラウザテスト[:：]' <<< "$TEST_PLAN"; then
+    BROWSER_TEST_DONE=True
+else
+    BROWSER_TEST_DONE=False
+fi
+```
+
+**移行時の注意**: 旧規約 (`## 動作確認スクリーンショット` セクション) で作られた
+in-flight の PR は証跡行を持たないため `BROWSER_TEST_DONE=False` になり、Step 5 の
+再走査が skip される (安全側の失敗)。再走査させたい場合は Test plan に
+`- [x] ブラウザテスト: {検証したケース} OK` の 1 行を手で足す。
 
 **review-only モードの ITER_MAX が 1 である理由**: 修正をかけずに reviewer
 を再起動しても、新しい情報が無いので findings は本質的に同じになる
@@ -840,11 +857,12 @@ else:
 - escalate 直行経路で commit 無しの場合: `### N 巡目 (commit なし、escalate
   中断 / 理由: $ESCALATE_REASON)`
 - Test plan のチェック状態も最新化 (完了項目は `[x]`)
-- **例外: `- [x] ブラウザテスト:` / `- [ ] ブラウザテスト: skip (...)` の行は
-  原文のまま保持する**。この行は Step 0.4 の `BROWSER_TEST_DONE` 判定キーなので、
-  削除・書式変更したり skip の `[ ]` を「未完了だから最新化」で `[x]` に
-  反転させたりしてはならない (前者は Step 5 の再走査が二度と走らなくなり、
-  後者は dev server が起動できなかった PR で再走査を試みる)
+- **例外: `- [x] ブラウザテスト:` / `- [ ] ブラウザテスト: skip (...)` /
+  `- [ ] ブラウザテスト再走査: ...` の行は原文のまま保持する**。前 2 者は
+  Step 0.4 の `BROWSER_TEST_DONE` 判定キーなので、削除・書式変更したり skip の
+  `[ ]` を「未完了だから最新化」で `[x]` に反転させたりしてはならない (前者は
+  Step 5 の再走査が二度と走らなくなり、後者は dev server が起動できなかった PR で
+  再走査を試みる)。再走査行は回帰の記録なので、`[x]` に反転させると回帰が隠れる
 
 ```bash
 gh pr edit "$N" --repo "$OWNER_REPO" --body-file docs/temp/pr-body.md
@@ -939,10 +957,14 @@ if BROWSER_TEST_DONE  # Step 0.4 で判定: PR 本文の Test plan に
                       # (経路 A/B 共通)
     AND (a または b または c または d):
     全ケースを再走査
-    失敗したら ESCALATE_REASON = "browser-regression" を立てて Step 7 へ進む
-    # 既存の `- [x] ブラウザテスト: ... OK` 行は判定キーなので消さない。
-    # 代わりに `- [ ] ブラウザテスト再走査: 回帰検出 ({内容})` を Test plan へ
-    # 追記する (OK 行だけが残ると「ブラウザテスト OK」と読める虚偽表示になる)
+    失敗したら:
+        # 既存の `- [x] ブラウザテスト: ... OK` 行は判定キーなので消さない。
+        # 代わりに `- [ ] ブラウザテスト再走査: 回帰検出 ({内容})` を Test plan へ
+        # 追記する (OK 行だけが残ると「ブラウザテスト OK」と読める虚偽表示になる)
+        docs/temp/pr-body.md に上記 1 行を追記し、**GitHub に反映する**:
+            gh pr edit "$N" --repo "$OWNER_REPO" --body-file docs/temp/pr-body.md
+        (Step 4.5 の投稿は追記前なので、ここで再投稿しないと本文に載らない)
+        ESCALATE_REASON = "browser-regression" を立てて Step 7 へ進む
 ```
 
 以下は完全 skip (= 正常な終了パス、escalate しない):
@@ -1428,7 +1450,8 @@ Step 5 を参照。判定の skip 判断は不要。条件が false でも実施
   (Python 風 `if [ ... ]:` / `else:` 等を許容)。実行可能な shell スクリプト
   ではない。実機実行する箇所は親エージェントが個別に `bash` ツールで実行
   する責務。**例外: Step 8「孤児 worktree の防御的 sweep」と Step 0.4 の
-  `BROWSER_TEST_DONE` 判定は verbatim 実行を意図した実シェル** (各節に明記)
+  「`BROWSER_TEST_DONE` の判定」は verbatim 実行を意図した実シェル**。いずれも
+  疑似コードと混在させず独立した `bash` fence に切り出し、各節に明記している
 - `review-pr` 自身を **Skill ツール経由で呼ぶ** ことは可能 (create-pr Step 6
   の委譲経路) で、その場合 `review-pr` 本体は親と同一コンテキストで走る。
   これがバイアスを生まないのは、本 skill が「コードを書いた本人がレビュー

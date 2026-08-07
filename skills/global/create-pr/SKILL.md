@@ -191,9 +191,13 @@ PR 本文に `##` などの `#` で始まる行が含まれると、Claude Code 
 ```bash
 # Write ツールで docs/temp/pr-body.md を作成
 # ↓
-gh pr create --title "<タイトル>" --body-file docs/temp/pr-body.md
+gh pr create --title "{タイトル}" --body-file docs/temp/pr-body.md
 # ↓
-rm docs/temp/pr-body.md  # クリーンアップは Step 8
+# 所有権 sidecar を残す (review-pr Step 0.3 がこれを見て「呼び出し元が用意した
+# ファイル」と判定し、上書き再取得せずそのまま使う)
+echo "{PR 番号}" > docs/temp/.pr-body.owner
+# ここでは rm しない。Step 6.4.5 / 6.5 と review-pr Step 0.4 が本ファイルを使う。
+# 削除は Step 8 でまとめて行う
 ```
 
 #### PR 本文フォーマット
@@ -216,17 +220,19 @@ rm docs/temp/pr-body.md  # クリーンアップは Step 8
 
 ## Test plan
 - [ ] テスト項目
-- [x] ブラウザテスト: {検証したケース} OK (スクリーンショットは非掲載)  ← Step 3 実施時のみ
+- [x] ブラウザテスト: {検証したケース} OK (スクリーンショットは非掲載)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
 Test plan の **ブラウザテスト行** は **Step 3 でブラウザテストを実施した場合のみ**
 入れる。Step 3 に入ったが skip した場合は `- [ ] ブラウザテスト: skip ({理由})` に
-置き換え、Step 3 の実施判定が false で入らなかった場合は行ごと省く（`  ← Step 3
-実施時のみ` の注記自体も本文には書かない）。`review-pr` Step 0.4 がこの行を判定
-キーに使うので書式を崩さない。**この規約は下の「Issue 対応時」テンプレートにも
-同じく適用する**。
+置き換え、Step 3 の実施判定が false で入らなかった場合は行ごと省く。
+`review-pr` Step 0.4 がこの行を判定キーに使うので書式を崩さない。**この規約は
+下の「Issue 対応時」テンプレートにも同じく適用する**。
+
+テンプレート内には注記を書かない。証跡行はバイト一致で判定されるため、注記が
+残ると本文にそのまま混入する。
 
 ##### Issue 対応時の追加ルール
 
@@ -247,7 +253,7 @@ Test plan の **ブラウザテスト行** は **Step 3 でブラウザテスト
 
 ## Test plan
 - [ ] テスト内容
-- [x] ブラウザテスト: {検証したケース} OK (スクリーンショットは非掲載)  ← Step 3 実施時のみ
+- [x] ブラウザテスト: {検証したケース} OK (スクリーンショットは非掲載)
 
 Closes #<issue 番号>
 
@@ -543,11 +549,12 @@ while iteration <= 5:
       - 「対応履歴」セクションを追加または更新し、今巡の auto-fix / escalate /
         silent-reject の件数と主な内訳を 3-5 行で要約
       - Test plan のチェック状態も最新化 (完了項目は [x])
-      - 例外: 「- [x] ブラウザテスト:」「- [ ] ブラウザテスト: skip (...)」の行は
-        原文のまま保持する (review-pr Step 0.4 の判定キー。削除・書式変更や
-        skip の [ ] → [x] 反転をしない)
+      - 例外: 「- [x] ブラウザテスト:」「- [ ] ブラウザテスト: skip (...)」
+        「- [ ] ブラウザテスト再走査: ...」の行は原文のまま保持する
+        (review-pr Step 0.4 の判定キー / 回帰の記録。削除・書式変更や
+        [ ] → [x] 反転をしない)
     gh pr edit {N} --body-file docs/temp/pr-body.md
-    rm docs/temp/pr-body.md
+    # rm はしない。6.5 が回帰時に本文へ追記するため残す (削除は Step 8)
 
     # 6.5 ブラウザテストの再走査 (UI 影響のある修正のときのみ)
     # 判定対象は今巡 (= 直近 commit) で変更されたファイルのみ:
@@ -560,10 +567,14 @@ while iteration <= 5:
     #       diff 内で目視確認 (`class=` または ` class:` の変更行あり)
     if Step 3 で実施していた AND (a または b または c または d):
         全ケースを再走査
-        失敗したら escalate して Step 7 に進む
-        # 既存の「- [x] ブラウザテスト: ... OK」行は判定キーなので消さず、
-        # 「- [ ] ブラウザテスト再走査: 回帰検出 ({内容})」を Test plan へ追記する
-        # (OK 行だけが残ると「ブラウザテスト OK」と読める虚偽表示になる)
+        失敗したら:
+            # 既存の「- [x] ブラウザテスト: ... OK」行は判定キーなので消さず、
+            # 「- [ ] ブラウザテスト再走査: 回帰検出 ({内容})」を Test plan へ追記する
+            # (OK 行だけが残ると「ブラウザテスト OK」と読める虚偽表示になる)
+            docs/temp/pr-body.md に上記 1 行を追記
+              (6.4.5 で消していないので存在する。無ければ gh pr view で再生成)
+            gh pr edit {N} --body-file docs/temp/pr-body.md   # 追記を GitHub に反映
+            escalate して Step 7 に進む
     # 以下は完全 skip (= 正常な終了パス、escalate しない):
     # - Step 3 を実施しなかった PR (実施判定が false / dev server 起動不可で skip)
     # - 今巡の auto-fix が typo / import 整理など UI に無関係なもののみ
@@ -594,10 +605,12 @@ while iteration <= 5:
 ### Step 8: クリーンアップ
 
 ```bash
-rm docs/temp/pr-body.md
+rm -f docs/temp/pr-body.md docs/temp/.pr-body.owner
 ```
 
 `docs/temp/` に他のファイルがある場合があるため、**ディレクトリごと削除しない**。
+Step 5 で作った所有権 sidecar (`.pr-body.owner`) も本文ファイルと対で削除する
+(残すと次回別 PR で `review-pr` Step 0.3 が経路 A と誤判定する)。
 
 PR 完成後は Step 7 の最終報告 (PR URL / 巡数 / ブラウザテスト結果 / escalate
 内容 / コミット履歴概要) をユーザーに返して終了する。
