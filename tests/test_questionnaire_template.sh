@@ -181,7 +181,66 @@ if extract_block "$SKILL_DIR/SKILL.md" 'ファイル特定と鮮度判定' > "$S
 else
     scheck "SKILL.md から Step 5 の鮮度判定ブロックを抽出できる" "抽出に失敗"
 fi
-rm -rf "$STEP3_TMP" "$STEP5_TMP"
+
+# SKILL.md Step 7 の「出力先ディレクトリ決定」ブロックも本文から抽出して実行する。
+# 固定値 (qa/) に戻る回帰を検出するため。docs/qa/ に集約しているリポで固定値に戻ると、
+# 規約から外れた 1 本だけが別の場所に生えて qa が二重管理になる。
+STEP7_TMP="$(mktemp -d)"
+if extract_block "$SKILL_DIR/SKILL.md" '出力先と命名の手がかり' > "$STEP7_TMP/step7.sh" 2>/dev/null; then
+    scheck "SKILL.md から Step 7 の出力先判定ブロックを抽出できる" "ok"
+
+    mkdir -p "$STEP7_TMP/case_docs/docs/qa"
+    scheck "Step 7: docs/qa があればそこを使う" "$(
+        out=$(cd "$STEP7_TMP/case_docs" && bash ../step7.sh | grep '^qa_dir=')
+        [ "$out" = "qa_dir=docs/qa" ] && echo ok || echo "出力=$out"
+    )"
+
+    mkdir -p "$STEP7_TMP/case_root"
+    scheck "Step 7: docs/qa が無ければ qa/ を作って使う" "$(
+        out=$(cd "$STEP7_TMP/case_root" && bash ../step7.sh | grep '^qa_dir=')
+        if [ "$out" = "qa_dir=qa" ] && [ -d "$STEP7_TMP/case_root/qa" ]; then
+            echo ok
+        else
+            echo "出力=$out / qa ディレクトリ作成=$([ -d "$STEP7_TMP/case_root/qa" ] && echo yes || echo no)"
+        fi
+    )"
+
+    printf '# qa\n\n## ファイル命名\n\n- `QA-<topic>-<Issue番号>.md`\n' \
+        > "$STEP7_TMP/case_docs/docs/qa/README.md"
+    touch "$STEP7_TMP/case_docs/docs/qa/QA-existing-123.md"
+    STEP7_OUT="$(cd "$STEP7_TMP/case_docs" && bash ../step7.sh)"
+    scheck "Step 7: 既存ファイルを命名の手がかりとして出す" "$(
+        echo "$STEP7_OUT" | grep -q 'QA-existing-123.md' && echo ok || echo "既存ファイルが出ていない"
+    )"
+    scheck "Step 7: 既存ファイル一覧に README.md を含めない" "$(
+        # README は命名の手がかりではない (これを混ぜると README-... という名前を作りうる)
+        echo "$STEP7_OUT" | grep -q '^README\.md$' && echo "README.md が混ざっている" || echo ok
+    )"
+    scheck "Step 7: README の命名規約を提示する" "$(
+        echo "$STEP7_OUT" | grep -q 'QA-<topic>-<Issue番号>.md' && echo ok || echo "命名規約が出ていない"
+    )"
+else
+    scheck "SKILL.md から Step 7 の出力先判定ブロックを抽出できる" "抽出に失敗"
+fi
+
+# qa アーティファクトのテンプレートに `反映先` 行があること。
+# ここが欠けると「回答は出たがどの確定知に効くのか誰も知らない」記録になり、
+# qa が knowledge の輪から外れて溜まるだけになる。
+scheck "Step 7 のテンプレートに 反映先 行がある" "$(
+    python3 - "$SKILL_DIR/SKILL.md" <<'PY'
+import io, re, sys
+src = io.open(sys.argv[1], encoding='utf-8').read()
+blocks = [m.group(1) for m in re.finditer(r'```markdown\n(.*?)```', src, re.S)]
+tmpl = [b for b in blocks if '## 回答（確定' in b]
+if not tmpl:
+    print('qa テンプレートの markdown ブロックが見つからない'); raise SystemExit
+if not re.search(r'^- 反映先: ', tmpl[0], re.M):
+    print('テンプレートに `- 反映先: ` 行が無い'); raise SystemExit
+print('ok')
+PY
+)"
+
+rm -rf "$STEP3_TMP" "$STEP5_TMP" "$STEP7_TMP"
 
 # --- 前提コマンドの解決 (無ければブラウザ部分のみ SKIP) ---
 skip_browser() {
