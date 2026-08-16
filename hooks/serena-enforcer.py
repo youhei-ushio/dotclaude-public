@@ -15,6 +15,16 @@ code (paths under app/, src/, tests/, database/, routes/, lib/, config/,
 bootstrap/ or files with code extensions). Non-code targets (logs, JSON,
 YAML, markdown, etc.) are not blocked.
 
+Before matching, the command is normalized to remove three sources of
+false positives observed in practice (see _strip_for_match):
+
+- heredoc bodies — `git commit -m "$(cat <<'EOF' ... EOF)"` mentioning
+  code filenames in the message is not code discovery.
+- grep pattern operands — `grep -e '{detect}.ts' notes.md` searches a
+  markdown file; the extension is in the pattern, not the target.
+- build artifacts — `wc -l lib/index.js` inspects compiled output.
+  Serena reads source, so it cannot answer questions about build results.
+
 Bypass: append `# via:bash-discovery: <reason>` to the command if you
 have a justified reason to use bash for discovery anyway (e.g., a quick
 sanity check that serena cannot do, or running tests via grep on test
@@ -35,6 +45,34 @@ CODE_EXT_PATTERN = (
     r"\.(?:php|ts|tsx|js|jsx|py|rb|go|java|kt|rs|cpp|cc|c|h|hpp|cs|swift|scala|vue)\b"
 )
 BLADE_EXT_PATTERN = r"\.blade\.php\b"
+
+# ---- 判定前に落とすノイズ（誤爆の実例に基づく） ---------------------------
+
+# ビルド生成物・依存物のディレクトリ配下のトークン。
+# Serena はソースを読むので、生成結果の確認（`wc -l lib/index.js` で関数が
+# エクスポートされたか見る等）は代替できない。コード探索ではないため対象外にする。
+ARTIFACT_TOKEN = re.compile(
+    r"(?<!\S)\S*\b(?:lib|dist|build|out|target|node_modules|coverage|vendor)/\S*"
+)
+
+# heredoc の本体。`git commit -F -` や `cat <<'EOF'` の本文に code ファイル名が
+# 出るだけで cat ルールに掛かっていた（コミットメッセージが最多の誤爆源）。
+HEREDOC_BODY = re.compile(r"<<-?\s*(['\"]?)(\w+)\1.*?^\s*\2\s*$", re.S | re.M)
+HEREDOC_OPEN = re.compile(r"<<-?\s*(['\"]?)\w+\1")
+
+# クォート文字列。grep を含むコマンドでのみ落とす（検索パターンは通常クォート済み、
+# 対象パスは通常裸のため）。`grep -e '...ts' knowledge/x.md` の誤爆を消す。
+QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+
+
+def _strip_for_match(command: str) -> str:
+    """RULES 判定用にコマンドを正規化する（bypass 判定には使わない）。"""
+    c = HEREDOC_BODY.sub(" ", command)
+    c = HEREDOC_OPEN.sub(" ", c)
+    c = ARTIFACT_TOKEN.sub(" ", c)
+    if re.search(r"\bgrep\b", c):
+        c = QUOTED.sub(" ", c)
+    return c
 
 
 # Each rule: (compiled regex, reason, tool_label)
@@ -129,10 +167,13 @@ def main() -> int:
 
     # まず RULES に対してマッチ判定 (どの tool 系のコード探索コマンドか特定)。
     # マッチしなければ何もせず exit 0 (= block 対象外コマンドはそのまま通す)。
+    # 判定は正規化後の文字列に対して行う（heredoc 本体 / grep のパターン /
+    # ビルド生成物は「コード探索」ではないため）。bypass 判定は原文に対して行う。
+    haystack = _strip_for_match(command)
     matched_reason = None
     matched_tool_label = None
     for pattern, reason, tool_label in RULES:
-        if pattern.search(command):
+        if pattern.search(haystack):
             matched_reason = reason
             matched_tool_label = tool_label
             break
