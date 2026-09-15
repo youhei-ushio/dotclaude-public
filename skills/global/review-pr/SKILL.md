@@ -103,10 +103,13 @@ create-pr Step 5 からの内部呼び出しで depth フラグが渡された�
    - **Impact** (full のみ): 共有部品波及・データ整合性・業務フロー影響に特化
    - **Analyst（裁定者）**: 全ロールの指摘をマージし `silent-reject` / `escalate` / `auto-fix` に分類。事実検証も担当（旧 Fact-checker の役割を統合）
    - **全レビュアーロール (Correctness / Security / Impact) は read-only**:
-     `disallowedTools: [Edit, Write]` を明示し、プロンプトで修正を禁止する
+     プロンプトで Edit / Write・作業ツリーの変更・remote への書き込み
+     (`git push` / `gh pr edit|review|merge` / `gh api` の非 GET) を禁止する。
+     Agent ツールにツールを絞るパラメータは無く、原則 4 の `isolation: "worktree"`
+     が物理的に守るのは **親の作業ツリーだけ** (remote と認証は共有される)
 3. 全エージェントとも親セッションの文脈を渡さず、diff ファイルと
    PR 本文ファイルのパスだけ渡して純粋に評価させる。
-4. レビュー agent (Reviewer A / B / Fact-checker) は **必ず
+4. レビュー agent (Correctness / Security / Impact / Analyst、legacy: Reviewer A / B / Fact-checker) は **必ず
    `isolation: "worktree"` で spawn し、かつプロンプトで作業ツリーの
    変更を禁止する (二重防御)**。理由: Agent (subagent) は
    `isolation` を指定しない限り親と cwd / git 作業ツリーを共有する。
@@ -146,16 +149,36 @@ ARG_DEPTH=""
 EXPECT_DEPTH_VALUE=False
 for tok in $args:   # 擬似コード: $args を空白区切りでトークン化したものを順に処理
     if EXPECT_DEPTH_VALUE:
-        ARG_DEPTH = tok   # "lightweight" or "full"
+        if tok not in ("lightweight", "full"):
+            echo "[review-pr] --depth の値が不正です: ${tok} (lightweight | full)"
+            中断 (skill return)
+        ARG_DEPTH = tok
         EXPECT_DEPTH_VALUE = False
     elif tok == "--depth":
+        if ARG_DEPTH != "":
+            echo "[review-pr] --depth が重複しています"
+            中断 (skill return)
         EXPECT_DEPTH_VALUE = True
     elif tok in ("--review-only", "--fix"):
+        if ARG_MODE_FLAG != "":
+            echo "[review-pr] モードフラグが重複しています: ${ARG_MODE_FLAG} と ${tok}"
+            中断 (skill return)
         ARG_MODE_FLAG = tok
+    elif tok starts with "-":
+        # typo (--review--only / -fix 等) を黙って無視すると意図と違う MODE / DEPTH で走る
+        echo "[review-pr] 未知のフラグです: ${tok}"
+        中断 (skill return)
     elif tok matches regex ^[0-9]+$:   # 整数のみ厳密 match (例: "5x" や "1-foo" は不可)
+        if ARG_PR != "":
+            echo "[review-pr] PR 番号が複数あります: ${ARG_PR} と ${tok}"
+            中断 (skill return)
         ARG_PR = tok
     else:
-        pass   # 未知トークンは無視 (将来拡張余地)
+        pass   # フラグでも番号でもないトークンは無視する (自然言語の補足を許容。
+               # 意図を変える入力はすべて "-" 始まりか整数なので、上の分岐で捕まる)
+if EXPECT_DEPTH_VALUE:
+    echo "[review-pr] --depth に値がありません (lightweight | full)"
+    中断 (skill return)
 
 # PR 番号の確定
 if [ -n "$ARG_PR" ]:
@@ -306,7 +329,7 @@ if [ -f "$REPO_ROOT/docs/temp/pr-body.md" ]:
     else:
         # sidecar 無し / 別ブランチのゴミファイル → 経路 B 扱いで上書き再生成
         if [ -n "$N" ]:
-            gh pr view "$N" --json body -q .body > "$REPO_ROOT/docs/temp/pr-body.md"
+            gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > "$REPO_ROOT/docs/temp/pr-body.md"
         else:
             # PR 不在 (sidecar 不一致 + N 空の異常状態) → 空ファイル
             echo "" > "$REPO_ROOT/docs/temp/pr-body.md"
@@ -315,7 +338,7 @@ if [ -f "$REPO_ROOT/docs/temp/pr-body.md" ]:
 else:
     # ファイル無し → 経路 B
     if [ -n "$N" ]:
-        gh pr view "$N" --json body -q .body > "$REPO_ROOT/docs/temp/pr-body.md"
+        gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > "$REPO_ROOT/docs/temp/pr-body.md"
     else:
         # PR 不在 (経路 A で sidecar もない異常状態) → 空ファイル
         echo "" > "$REPO_ROOT/docs/temp/pr-body.md"
@@ -358,17 +381,18 @@ POSTED_TO_GITHUB = False # review-only モード Step 6.6.3 で gh pr review が
                          # (True なら markdown を削除、False なら残置して
                          # ユーザーが手で投稿 / 編集できる状態に保つ)。
                          # 全 MODE 共通で初期化 (未定義参照リスクの根絶)
-BROWSER_TEST_DONE = ...  # 経路 A (create-pr 経由): create-pr Step 4 で
-                         # 初回ブラウザテストを実施したかを示すブール。
-                         # 判定キーは「PR 本文に `## ブラウザテスト`
-                         # セクションがあるか」で代用する
-                         # ($REPO_ROOT/docs/temp/pr-body.md を grep)。
-                         # 経路 B (ad-hoc) でも同じ判定キーで OK
-                         # review-only モードでは使わない (Step 5 自体 skip)
-RESOLVED_KEYS = set()    # fix-stable 収束キー。前巡で auto-fix 済みの
-                         # 指摘を追跡し、再出現を除外する。defect/judgment 両方の
-                         # キーを含むが、収束判定 (Step 6) では defect のみを対象とする。
-                         # キー = file + category + normalize(evidence)
+# 経路 A (create-pr 経由) で create-pr Step 4 が初回ブラウザテストを実施したか。
+# 判定キーは「PR 本文に `## ブラウザテスト` セクションがあるか」。経路 B でも同じ。
+# review-only モードでは使わない (Step 5 自体 skip)
+BROWSER_TEST_DONE = (grep -qF '## ブラウザテスト' "$REPO_ROOT/docs/temp/pr-body.md" 2>/dev/null && echo True || echo False)
+PUSH_FAILED = False      # 経路 B の Step 6.5 で push できなかったら True。Step 7 で参照 (全 MODE 共通で初期化)
+RESOLVED_KEYS = set()    # fix-stable 収束キー。**前巡までに** auto-fix 済みの
+                         # 指摘のキー (kind 名前空間付き "defect:..." / "judgment:...")。
+                         # 本巡の auto-fix 分は Step 6 の収束判定の **後** に足す。
+                         # 収束判定 (Step 6) では defect のみを対象とする
+FIXED_KEYS_THIS_ROUND = set()   # 本巡 Step 4 で auto-fix した指摘のキー。毎巡 Step 4 先頭で空にする
+                         # キー = file + kind + normalize(content)
+                         #   normalize = 空白正規化 + 行番号除去 + 指摘番号 (R-n) 除去
 ```
 
 **review-only モードの ITER_MAX が 1 である理由**: 修正をかけずに reviewer
@@ -390,9 +414,9 @@ while iteration <= ITER_MAX:
     Step 1.5 (docs-drift / test-gap 事前検出)
         → fix モード初巡のみ。review-only / 2 巡目以降は skip
         → 検出した乖離・ギャップがあれば修正 → commit (push はしない。最終 push は create-pr 側で行う)
-    Step 2 (3 エージェント並列レビュー、MODE 共通)
-        → iteration >= 3 なら REVIEWER_PROMPT 末尾に後半巡制約を付与
-          (review-only は ITER_MAX=1 のためこの分岐は走らない)
+    Step 2 (DEPTH に応じたレビュアーロール + Analyst の並列レビュー、MODE 共通)
+        → iteration >= 3 なら各ロールのプロンプト末尾に後半巡制約を付与
+          (全 DEPTH 共通。lightweight / review-only は ITER_MAX=1 のため走らない)
     Step 3 (指摘分類)
         → fix モード: silent-reject / escalate / auto-fix の 3 分類
         → review-only モード: silent-reject / report の 2 分類
@@ -414,7 +438,8 @@ while iteration <= ITER_MAX:
         → review-only モード: 本 Step は完全 skip (本巡 commit が無いため)
         → fix モード: UI 影響あり時のみ。回帰失敗: ESCALATE_REASON =
           "browser-regression" → break
-    Step 6 (iteration += 1)
+    Step 6 (収束判定 → RESOLVED_KEYS 更新 → iteration += 1)
+        → 2 巡目以降、本巡の defect が前巡までに直した論点だけなら break (収束)
         → iteration > ITER_MAX なら break (Step 6.5 / 6.6 / Step 7 へ)
         → そうでなければループ先頭 (Step 1) へ
 Step 6.5 (fix モード経路 B のみ、ループ後): final push + PR 本文更新
@@ -451,16 +476,14 @@ if [ "$MODE" = "review-only" ]:
     # cross-repo (fork PR) 判定: head のオーナーが base リポのオーナーと違う場合
     BASE_OWNER=$(echo "$OWNER_REPO" | cut -d/ -f1)
 
-    # local fetch を試みる (同一リポなら成功、fork なら origin に該当 ref 無く失敗)
-    git fetch origin "$BASE" "$HEAD_REF" 2>/dev/null || git fetch origin "$BASE"
-
-    # BEHIND 計算: 同一リポなら local rev-list、fork なら gh api compare で cross-repo 比較
+    # BEHIND 計算は **gh api compare に一本化** する。refspec 省略形の
+    # `git fetch origin "$BASE" "$HEAD_REF"` は refs/remotes/origin/$HEAD_REF の
+    # 更新を保証せず、local rev-list が stale な値を「成功」として返すため
+    # (フォールバックが効かない)。同一リポは base...head、fork は base...owner:head
     if [ "$HEAD_OWNER" = "$BASE_OWNER" ]:
-        BEHIND=$(git rev-list --count "origin/$HEAD_REF..origin/$BASE" 2>/dev/null \
-                 || gh api "repos/$OWNER_REPO/compare/$HEAD_REF...$BASE" -q .ahead_by 2>/dev/null \
+        BEHIND=$(gh api "repos/$OWNER_REPO/compare/$BASE...$HEAD_REF" -q .behind_by 2>/dev/null \
                  || echo 0)
     else:
-        # fork PR: compare API は base...head_owner:head_ref 形式を要求
         BEHIND=$(gh api "repos/$OWNER_REPO/compare/$BASE...$HEAD_OWNER:$HEAD_REF" -q .behind_by 2>/dev/null \
                  || echo 0)
     BEHIND=${BEHIND:-0}   # 空文字フォールバック (.behind_by が JSON null だった等)
@@ -472,9 +495,9 @@ if [ "$MODE" = "review-only" ]:
 **fork PR の検出と compare 方式**: `headRepositoryOwner` を gh CLI 経由で
 取得し base リポオーナー (`$OWNER_REPO` の前半) と比較。一致なら同一リポ branch、
 不一致なら fork PR と判定して compare API の cross-repo 形式
-(`compare/$BASE...$HEAD_OWNER:$HEAD_REF` + `.behind_by`) を使う。同一リポでも
-`origin/$HEAD_REF` が古いケースは local rev-list が失敗するので gh api への
-フォールバックを置いている。
+(`compare/$BASE...$HEAD_OWNER:$HEAD_REF`) を使う。どちらも `.behind_by`
+(= head が base から何コミット遅れているか) を読む。local の git fetch +
+rev-list は使わない (上記コメント参照)。
 
 以下は fix モードの挙動:
 
@@ -493,7 +516,7 @@ if [ "$BEHIND" -gt 0 ]:
     # 補足: $BASE は Step 0.2 でループ外で 1 回だけ取得しており、
     # ループ中の PR base 変更には追従しない。実運用ではレアなので
     # 許容している。base が動的に変わる運用がある場合は本 Step 冒頭
-    # で `BASE=$(gh pr view "$N" --json baseRefName -q .baseRefName)`
+    # で `BASE=$(gh pr view "$N" --repo "$OWNER_REPO" --json baseRefName -q .baseRefName)`
     # を再実行する変種で対応
 
     # rebase 後も push しない (最終 push は create-pr Step 7 で 1 回だけ)
@@ -536,8 +559,9 @@ PR_BODY_PATH="$REPO_ROOT/docs/temp/review-pr-body.md"
 #### 2.1 レビュアーロールの並列起動
 
 DEPTH に応じて起動するロールが変わる。1 メッセージで Agent ツールを並列に
-呼ぶ (single message, multiple tool calls)。**全レビュアーロールは read-only
-で、Edit / Write を物理的に禁止する**。
+呼ぶ (single message, multiple tool calls)。**全レビュアーロールは read-only**
+(プロンプトで Edit / Write と作業ツリー・remote の変更を禁止し、worktree 分離で
+親ツリーを守る。重要原則 2 / 4)。
 
 **大規模 diff の zone 分割 (任意)**: diff ファイルの変更ファイル数が 20 以上
 の場合、ファイルを非重複の zone（ディレクトリ単位 or 機能単位）に分割し、
@@ -614,8 +638,8 @@ LEGACY_REVIEWER_PROMPT、後半巡制約、fix-stable 収束キー除外指示�
 - 各クラスタに `agreement` (ヒットしたロール数) を付与
 - クラスタごとに代表 finding (より具体的な記述の方) を採用
 - **fix-stable 収束キーを生成**: 各 finding に `convergence_key =
-  file + category + normalize(evidence)` を付与
-  - `normalize`: 空白正規化 + 行番号除去 + コメント参照除去
+  file + kind + normalize(content)` を付与 (パース結果に実在するフィールドだけで作る)
+  - `normalize`: 空白正規化 + 行番号除去 + 指摘番号 (R-n) 除去
 
 結果として、重複排除済み・agreement count 付き・収束キー付きの finding
 リスト `FINDINGS_RAW` を得る。
@@ -664,10 +688,16 @@ ANALYST_PROMPT:
 ## 検証対象ファイル
 - diff ファイル: `{DIFF_PATH}`
 - PR 本文: `{PR_BODY_PATH}`
+- Issue: PR 本文に Issue クローズキーワード (`Close(s|d)? #<N>` 等) があれば
+  `gh issue view <N> --repo {OWNER_REPO}` で成功条件・受け入れ基準を取得する
+  (目的適合性の検証に使う)
 
 ## 重要な制約 (作業ツリーを変更しないこと)
-検証は上記ファイルの Read、および `gh api` での read-only な取得のみで
-行うこと。
+検証は上記ファイルの Read、および `gh api` / `gh issue view` / `gh search code`
+での read-only な取得のみで行うこと。**`git checkout` / `git switch` /
+`git branch` 作成 / `gh pr checkout` で作業ツリーや HEAD を変更してはならない**。
+Edit / Write、および remote への書き込み (`git push` / `gh pr edit|review|merge` /
+`gh api` の非 GET) も禁止。
 
 ## あなたの役割
 1. **事実検証**: 各指摘の事実主張（関数の存否 / 行番号 / ファイル存否等）
@@ -696,11 +726,12 @@ ANALYST_PROMPT:
   toolset に依存する主張は対象外。"n/a" を返す。
 
 ## 返答フォーマット
-指摘番号ごとに 1 行:
-  A-<id> — <verified|false-claim|n/a> — <根拠 or 補足>
+指摘番号ごとに 1 行 (末尾に主マークの妥当性判定を付ける。Step 3 の分類は元の
+主マークで行い、この判定は Step 7 の報告に「Analyst の再評価」として載せる):
+  A-<id> — <verified|false-claim|n/a> — <根拠 or 補足> — <適切 | 過大→[提案マーク] | 過小→[提案マーク]>
 
-追加指摘 (criticalDecisions 検証で発見) がある場合:
-  A-NEW-<N> — <ファイルパス:行番号> — <マーク> — <内容> — <推奨アクション>
+追加指摘 (criticalDecisions 検証で発見) がある場合 (種別 [defect] / [judgment] を必ず付ける):
+  A-NEW-<N> — <ファイルパス:行番号> — <マーク> — <種別> — <内容> — <推奨アクション>
 
 ## 縫合部検査 (zone 分割時のみ、以下が付与される)
 zone 分割が適用された場合、以下の zone 境界ファイルリストが追加される。
@@ -713,14 +744,17 @@ zone 間で共有される interface / trait / 型定義 / route 定義 / 認証
 {FINDINGS_RAW}
 ```
 
-**legacy モードでは**: Analyst の代わりに旧 Fact-checker を起動する
-（ANALYST_PROMPT から criticalDecisions 検証を除いた旧 FACTCHECK_PROMPT）。
+**legacy モードでは**: Analyst の代わりに Fact-checker を起動する
+(`references/reviewer-prompts.md` の LEGACY_FACTCHECK_PROMPT。事実検証のみで
+criticalDecisions 検証と主マーク再評価は行わない)。
 
 #### 2.5 Analyst 結果を FINDINGS_RAW にマージ
 
 各 finding に `factcheck` フィールド (`verified` / `false-claim` / `n/a` /
 `parent-rejected`) を付与。Analyst の追加指摘（criticalDecisions 検証）も
-finding リストに追加。`FINDINGS` という最終リストを得る。これを Step 3 に渡す。
+finding リストに追加する (`agreement = 1`、`factcheck = "verified"` 扱い。
+`convergence_key` と `kind` は Step 2.2 と同じ規則で付与し、`kind` 未指定は
+defect)。`FINDINGS` という最終リストを得る。これを Step 3 に渡す。
 
 **重要**: Skill ツールで他のレビュー skill を直接呼び出すと同一コンテキスト
 実行になりバイアスが残るため不可。必ず Agent ツールでレビュアー + Analyst を
@@ -728,29 +762,36 @@ finding リストに追加。`FINDINGS` という最終リストを得る。こ�
 
 ### Step 3: 指摘分類
 
-`FINDINGS` (= Reviewer A/B 集約 + Pre-class + Fact-check 結果付き) を以下
-のいずれかに振り分ける。
+`FINDINGS` (= レビュアーロール (Correctness / Security / Impact、legacy では
+Reviewer A/B) の集約 + Pre-class + Analyst (legacy では Fact-checker) の検証結果付き)
+を以下のいずれかに振り分け、結果を各 finding の `classification` フィールド
+(`silent-reject` / `escalate` / `auto-fix`、review-only では `silent-reject` /
+`report`) に格納する (Step 6 の収束判定と Step 7 の報告が参照する)。
+Analyst の主マーク再評価 (過大 / 過小) は分類に使わず、Step 7 の報告に載せる。
 
 **review-only モード時の差分**: `silent-reject` と `report` (= GitHub
 コメントに投稿) の 2 分類のみ。`escalate` / `auto-fix` の区別は無い (両者
 とも report 扱い、Step 6.6 で投稿)。
 
-**ただし、review-only では (i) silent-reject の `agreement == 1 かつ
-[Must-fix] かつ factcheck != verified かつ iteration < 3` 条件 (=
-ハルシネーション疑いの単独票重大主張) を silent-reject すると、ITER_MAX=1
-かつ「2 巡目以降で再評価する機会がない」ため、本来 collaborator に
-判断を委ねるべき重大指摘が黙って消える**。これを防ぐため、review-only
-モードでは当該条件に該当する finding は **`[Question]` 扱いで report する**
-(Step 6.6.1 の「質問 / 要確認」セクションに集約):
+**ただし、review-only では事実確認できなかった重大主張を silent-reject
+すると、ITER_MAX=1 かつ「2 巡目以降で再評価する機会がない」ため、本来
+collaborator に判断を委ねるべき重大指摘が黙って消える**。これを防ぐため、
+review-only モードでは以下に該当する finding は **`[Question]` 扱いで report
+する** (Step 6.6.1 の「質問 / 要確認」セクションに集約):
+
+- legacy: (i) の `agreement == 1` かつ `[Must-fix]` かつ `factcheck != "verified"`
+  (= ハルシネーション疑いの単独票重大主張)
+- ポジションロール方式 (lightweight / full): `[Must-fix]` かつ `factcheck == "n/a"`
+  (fix モードの escalate 振替と同じ条件。`agreement` は見ない)
 
 ```text
 if MODE == "review-only":
     各 finding について:
-        if (i) silent-reject 条件のうち factcheck="false-claim" / "parent-rejected":
+        if factcheck == "false-claim" or factcheck == "parent-rejected":
             → silent-reject (誤指摘なので投稿しない)
-        elif (i) の agreement==1 / [Must-fix] / factcheck unverified 条件:
+        elif 上記の DEPTH 別「質問振替」条件に該当:
             → report (ただし「質問 / 要確認」セクションへ振替、
-                      「単独票・要事実確認」の旨を 1 行添える)
+                      「要事実確認」の旨を 1 行添える)
         else:
             → report (主マーク [Must-fix] / [Should-fix] / [Nice-to-have] /
                       [Tradeoff] / [Security] をそのまま保持して Step 6.6 で
@@ -764,14 +805,21 @@ if MODE == "review-only":
 
 - `factcheck == "false-claim"`
 - `factcheck == "parent-rejected"` (2.3 で親が tool 実在等を override)
-- `agreement == 1` かつ主マーク `== [Must-fix]` かつ `factcheck != "verified"`
-  かつ `iteration < 3`
-  (= 単独票の重大主張が事実確認できない = ハルシネーション疑い、保留)
+- **legacy (Reviewer A/B) のみ**: `agreement == 1` かつ主マーク `== [Must-fix]`
+  かつ `factcheck != "verified"` かつ `iteration < 3`
+  (= 同一プロンプトの 2 名のうち片方しか拾わなかった重大主張が事実確認できない
+  = ハルシネーション疑い、保留)。**ポジションロール方式 (lightweight / full) では
+  この条件を適用しない**: 観点を分業しているため `agreement == 1` が常態で、
+  Security 単独の [Must-fix] を黙って捨てることになる。ポジションロール方式で
+  `agreement == 1` かつ `[Must-fix]` かつ `factcheck == "n/a"` (Analyst が検証
+  できなかった) のときは silent-reject ではなく **escalate** に振り替える
+  (下の (ii))。`agreement >= 2` の `[Must-fix]` は n/a でも (iii) の auto-fix
+  (複数ロールが独立に同じ重大指摘を出しており、設計判断寄りでも捨てる側に倒さない)
 
-**iteration >= 3 の例外**: 3 巡目以降は REVIEWER_PROMPT を「マージブロッカー
-級のみ」に絞っているため (Step 2.1 後半巡制約参照)、`agreement == 1` の
-`[Must-fix]` であっても silent-reject せず **escalate に振り替える**
-(下の (ii) に該当として扱う)。理由: 後半巡の単独票 [Must-fix] は
+**legacy の iteration >= 3 の例外**: 3 巡目以降は各ロールのプロンプトを
+「マージブロッカー級のみ」に絞っているため (Step 2.1 後半巡制約参照)、
+`agreement == 1` の `[Must-fix]` であっても silent-reject せず **escalate に
+振り替える** (下の (ii) に該当として扱う)。理由: 後半巡の単独票 [Must-fix] は
 「絞り込んだプロンプトでも片方の reviewer が拾った重大指摘」であり、
 silent-drop すると 3 巡目以降の観点絞り込みがブロッカー級の見逃しを引き起こす
 リスクがある。escalate に倒してユーザー判断を仰ぐ方が安全側。
@@ -784,6 +832,15 @@ silent-drop すると 3 巡目以降の観点絞り込みがブロッカー級�
 - 仕様判断 (要件解釈で複数の正解がありうる)
 - 付加マーク `[Tradeoff]` 明示あり
 - `[Security]` かつ修正方針が複数 (例: 「MD5 → bcrypt 移行戦略」)
+- ポジションロール方式で `agreement == 1` かつ `[Must-fix]` かつ `factcheck == "n/a"`
+  ((i) からの振替。単一ロールの重大主張を Analyst が検証できなかった = 人が見る)
+- legacy の 3 巡目以降で `agreement == 1` かつ `[Must-fix]` かつ `factcheck != "verified"`
+  ((i) の例外からの振替)
+
+**escalate は Step 4 の early-break で同巡の auto-fix を無効化する** (fix-steps.md
+Step 4 先頭)。lightweight (ITER_MAX=1) では escalate 1 件で 0 修正のまま終わるので、
+振替条件を上の 2 つに限定している (agreement を見ない振替は、複数ロールが一致した
+Must-fix まで escalate に倒して修正を止めてしまう)。
 
 #### (iii) auto-fix (= 自動修正対象、上記以外すべて)
 
@@ -811,20 +868,28 @@ silent-reject した指摘は subagent に問い合わせず、Step 7 で
 ### Step 6: 巡数判定とループ継続
 
 ```text
-iteration += 1
-
-# fix-stable 収束判定: 新規 defect キーが 0 件なら ITER_MAX 前でも終了
-# judgment は収束判定に含めない (judgment を直し続けて巡数を消費するのを防ぐ)
-if MODE == "fix" and iteration > 1:
+# fix-stable 収束判定: 本巡の defect が **前巡までに** auto-fix 済みの
+# 論点だけなら ITER_MAX 前でも終了。RESOLVED_KEYS は「前巡までの分」で比較し、
+# 本巡の auto-fix 分 (FIXED_KEYS_THIS_ROUND) は判定の **後** に足す。
+# (先に足すと本巡で直した defect が必ず差し引かれ、全 defect を auto-fix した巡で
+# 常に 1 巡目で終了してしまう = 「修正が新たな問題を呼んでいないか」の再レビューが
+# 走らない)。1 巡目は比較対象が無いので判定しない。
+# judgment と silent-reject 済みの finding は判定に含めない
+# (judgment を直し続けて巡数を消費するのを防ぐ / 誤指摘が永久に "new" にならない)
+if MODE == "fix" and iteration >= 2:
     # kind 未指定は defect フォールバック。convergence_key は kind で名前空間を
     # 分ける (judgment として fix されたキーが同一 location の defect を遮蔽するのを防ぐ)
     new_defect_keys = {
         "defect:" + f.convergence_key
         for f in FINDINGS
-        if (f.kind or "defect") == "defect"
+        if (f.kind or "defect") == "defect" and f.classification != "silent-reject"
     } - RESOLVED_KEYS
     if len(new_defect_keys) == 0:
-        break  # 全 defect が既知 → 収束。Step 7 へ
+        RESOLVED_KEYS |= FIXED_KEYS_THIS_ROUND
+        break  # 前巡までに直した論点しか出てこない → 収束。Step 7 へ
+
+RESOLVED_KEYS |= FIXED_KEYS_THIS_ROUND   # 本巡の auto-fix 分を次巡以降の比較対象に加える
+iteration += 1
 
 if iteration > ITER_MAX:   # fix: depth 依存 / review-only: 1 巡完了
     break  # → Step 6.5 (fix 経路B) / Step 6.6 (review-only) → Step 7 へ
@@ -862,11 +927,21 @@ if [ "$MODE" = "fix" ] && [ "$OWNED_BODY_FILE" = "True" ] && [ -n "$N" ]:
     EXPECTED=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo "")
     git fetch origin "$BRANCH"
     if [ -n "$EXPECTED" ]:
-        git push --force-with-lease="refs/heads/$BRANCH:$EXPECTED"
+        git push --force-with-lease="refs/heads/$BRANCH:$EXPECTED" || PUSH_FAILED=True
+        # lease 不一致 (他人が先に push した) は reject される。force しない
     else:
-        echo "[review-pr] remote-tracking ref が無いため force push できません"
-        中断 (skill return)
-    gh pr edit "$N" --body-file "$REPO_ROOT/docs/temp/pr-body.md"
+        # 中断しない: ここで return すると Step 7 / 8 を通らず docs/temp/ が残る。
+        # remote-tracking ref が無い = remote の履歴を一度も取り込んでいないので、
+        # expect 値なしの force push は remote 側コミットを消しうる。push せず記録する
+        echo "[review-pr] remote-tracking ref が無いため push しません (Step 7 で報告)"
+        PUSH_FAILED=True
+    if [ "$PUSH_FAILED" = "True" ]:
+        # remote に無いコミットの「対応履歴」を PR 本文に載せない。本文はローカルの
+        # docs/temp/pr-body.md に残し (Step 8 は OWNED_BODY_FILE=True でも
+        # PUSH_FAILED=True なら rm しない)、Step 7 で手動手順を案内する
+        :
+    else:
+        gh pr edit "$N" --repo "$OWNER_REPO" --body-file "$REPO_ROOT/docs/temp/pr-body.md"
 ```
 
 ### Step 6.6: GitHub に summary review コメントを投稿 (review-only モードのみ)
@@ -880,7 +955,7 @@ if [ "$MODE" = "fix" ] && [ "$OWNED_BODY_FILE" = "True" ] && [ -n "$N" ]:
 レビュー結果サマリを報告する:
 
 - PR の URL と author
-- レビュー方式 (3-agent 並列、ITER_MAX=1)
+- レビュー方式 (DEPTH とロール構成、ITER_MAX=1)
 - 主マーク別の finding 件数: `Must-fix M (うち Question 振替 K) / Should-fix S / Nice-to-have N / Question Q (=振替合計 K + [Tradeoff] 振替分)`
   - **二重カウント方針**: Question 振替された finding は **元の主マーク側
     の件数からは控除し、Question 件数のみに計上** する (Step 6.6.1 markdown
@@ -903,6 +978,11 @@ if [ "$MODE" = "fix" ] && [ "$OWNED_BODY_FILE" = "True" ] && [ -n "$N" ]:
 - ITER_MAX 到達ケースは「後半巡が Nice-to-have のみ = 収束」/「Must-fix/Should-fix が出続けた = 警戒」のどちらかを明記
 - ブラウザテストの実施状況と最終結果
 - escalate された指摘 (あれば内容と該当指摘箇所、`ESCALATE_REASON` 値)
+- 経路 B で `PUSH_FAILED=True` なら、以下を案内する (force push を手で打たせない):
+  `git fetch origin "$BRANCH"` → `git log --oneline HEAD..origin/$BRANCH` で remote 側
+  だけにあるコミットを確認 → 空なら通常 `git push` で反映、あれば取り込んでから push。
+  PR 本文の更新は push 後に `gh pr edit "$N" --repo "$OWNER_REPO" --body-file docs/temp/pr-body.md`
+  で行う (ファイルは Step 8 で残置している)
 - defect / judgment の内訳 (各巡の auto-fix 件数を defect / judgment 別に表示)
 - silent-reject の件数と内訳 (主な理由)
 - **spurious 監査リスト**: silent-reject した全件を一覧で掲載する (件数だけでなく
@@ -926,7 +1006,8 @@ browser-regression escalate / review-only 投稿完了) でも、Step 7 完了�
 rm -f "$REPO_ROOT"/docs/temp/review-*.diff
 
 # fix モード: 本 skill 所有の PR 本文ファイルを削除
-if [ "$OWNED_BODY_FILE" = "True" ]:
+# (経路 B で push できなかった場合は、手動 push 後の gh pr edit に要るので残す。Step 7 の案内参照)
+if [ "$OWNED_BODY_FILE" = "True" ] && [ "$PUSH_FAILED" != "True" ]:
     rm -f "$REPO_ROOT/docs/temp/pr-body.md" "$REPO_ROOT/docs/temp/.pr-body.owner"
     # -f で冪等性確保 (rebase 失敗時の途中状態などで既に消えていても
     # error にしない)。sidecar (.pr-body.owner) も同時に消すことで
@@ -947,7 +1028,8 @@ if [ "$MODE" = "review-only" ]:
 
 #### 孤児 worktree の防御的 sweep
 
-Step 2 で `isolation: "worktree"` で spawn した Reviewer A/B/Fact-checker の
+Step 2 で `isolation: "worktree"` で spawn したレビュアーロール / Analyst
+(legacy では Reviewer A/B/Fact-checker) の
 worktree (`.claude/worktrees/agent-*`) は、subagent が**正常終了すれば
 harness が unlock + remove する**。この worktree の lock を保持
 しているのは **subagent 自身ではなく親 harness プロセスの pid** であり、同一
@@ -1025,7 +1107,8 @@ Step 5 を参照。判定の skip 判断は不要。条件が false でも実施
 - `docs/temp/` は `.gitignore` 対象外なので Step 8 で必ず掃除 (所有権ある場合)
 - セルフレビューループ中の commit message は短くて良い
   (`chore: <N> 巡目レビュー指摘反映` 等)、プロジェクトの commit 規約
-  (日本語 / 英語) に合わせる。squash は create-pr Step 6 が自動で行う
+  (日本語 / 英語) に合わせる。squash は経路 A では create-pr Step 6 が自動で行う
+  (経路 B の単独起動では squash しない)
 - **指摘 0 件で自然終了 = 基本ゴール / 5 巡到達 = 警戒シグナル または収束**
   (上の概要を参照)。Step 7 の報告では 5 巡到達ケースの「巡ごとの auto-fix
   件数推移」と「収束 / 警戒の判定」を明記すること
@@ -1064,7 +1147,8 @@ Step 5 を参照。判定の skip 判断は不要。条件が false でも実施
 - `review-pr` 自身を **Skill ツール経由で呼ぶ** ことは可能 (create-pr Step 5
   の委譲経路) で、その場合 `review-pr` 本体は親と同一コンテキストで走る。
   これがバイアスを生まないのは、本 skill が「コードを書いた本人がレビュー
-  する」ことを禁じているのは **Reviewer A/B/Fact-checker subagent の独立性**
+  する」ことを禁じているのは **レビュアーロール / Analyst (legacy では
+  Reviewer A/B/Fact-checker) subagent の独立性**
   のためで、orchestration 層 (= `review-pr` 本体) の独立性ではないため。
   実際のレビューは Step 2 で必ず Agent ツール経由 (`isolation: "worktree"`)
   でレビュアーロール + Analyst を spawn することで担保される

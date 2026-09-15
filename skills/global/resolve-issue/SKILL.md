@@ -1,7 +1,7 @@
 ---
 name: resolve-issue
 description: GitHub Issueの対応をパス別（bug/feature/ops）に最適化されたフローで実行します。Issue番号を指定して、mainの最新取得・実装・テスト・PR作成・レビューまでを自動で行います。「issue 439を対応して」「issue #402に取り掛かって」「/resolve-issue 123」のような自然言語で起動します。
-allowed-tools: Read, Grep, Glob, Bash, Edit, Write, Task
+allowed-tools: Read, Grep, Glob, Bash, Edit, Write, Agent, mcp__claude_ai_Gmail__search_threads
 ---
 
 # Issue対応フロー
@@ -55,9 +55,15 @@ if ERRORS is not empty:
 **注意**: knowledge/ の存在確認はパス判定後の Step 2 [feature] で実施する
 （Issue の業務領域が確定してから `knowledge/<domain>/` を検索するため）。
 
+**再開**: `session_logs/issue-<issue番号>/` に最新のセッションログがあれば (feature パスの
+セッションクリア後の再起動)、その「要約」を Read し、記録された次ステップから再開する。
+このとき (1) の未コミット変更は前セッションの作業なので ERRORS にしない。
+
 ### Step 1: Issue 分析 + パス選択
 
-1. `main` ブランチに切り替え、`git pull` で最新を取得
+1. 既定ブランチ (以下 `main` と表記。create-pr Step 1 と同じく
+   `git rev-parse --abbrev-ref origin/HEAD | sed 's@^origin/@@'` で解決し、無ければ
+   main / master の順に確認する) に切り替え、`git pull` で最新を取得
 2. `gh issue view <issue番号>` で Issue の内容を取得
 3. **Issue の内容を分析**し、以下を整理する:
    - **何が起きているか**: 現象（バグ報告）なのか、要望（機能追加・変更）なのか、運用作業なのか
@@ -117,11 +123,25 @@ if ERRORS is not empty:
 
 1. **不確定点チェック + 業務ナレッジ駆動の回答探索**:
    - Issue 本文の要件に曖昧な点がないか確認
-   - 不確定点がある場合、質問リストを生成し以下の順序で回答ソースを探索する:
-     1. **knowledge/ 検索** (プロジェクトに `knowledge/` がある場合): Issue の業務領域（domain）を判定し、`knowledge/<domain>/`
+   - 不確定点がある場合、質問リストを生成し以下の順序で回答ソースを探索する。
+     `knowledge/` は **利用リポ側の資産** (questionnaire skill は導入しない。無ければ
+     手順 1 と永続化を skip し、質問票の結果は questionnaire skill の `qa/*.md` にだけ残る):
+     1. **knowledge/ 検索** (利用リポに `knowledge/` がある場合): Issue の業務領域（domain）を判定し、`knowledge/<domain>/`
         配下のナレッジファイルを読み込む。既知の Q&A で回答できる質問は質問票から除外し、
         Issue コメントに「既知ナレッジから回答: [[slug]]」として記録する。
-        `last_verified` が 6 ヶ月以上前のナレッジは「要再確認」として除外せず質問票に含める
+        `last_verified` が 6 ヶ月以上前のナレッジは「要再確認」として除外せず質問票に含める。
+        ナレッジファイルの形式 (本 skill と create-issue skill で共通):
+        ```markdown
+        ---
+        slug: <domain>-<短い識別子>
+        question: <質問>
+        source: gmail (YYYY-MM-DD) | po (YYYY-MM-DD)
+        last_verified: YYYY-MM-DD
+        ---
+        <回答。事実・ルールのみ。個人名・メールアドレス・引用文は書かない>
+        ```
+        PII の禁止は本文だけでなく `slug` / `question` / `source` の各フィールドにも適用する
+        (git 管理下で GitHub に push されるため)
      2. **Gmail 検索** (Gmail MCP を接続している場合): 未解決の質問について Gmail MCP (`mcp__claude_ai_Gmail__search_threads`)
         で関連メールを検索する。検索スコープは以下に制限する:
         - ドメイン: 自社・取引先の業務ドメインからの送受信に限定
@@ -145,7 +165,7 @@ if ERRORS is not empty:
 2. **実装計画 (Plan)**（Issue コメントに記録）:
 
    実装に入る前に、何をどう作るかを構造化して計画する。
-   「軽量設計メモ」の上位互換であり、タスク分解・成功基準・仮定の明示を含む。
+   タスク分解・成功基準・仮定の明示を含む。
 
    **Plan の構成要素**:
 
@@ -219,6 +239,7 @@ if ERRORS is not empty:
    Agent(
        description = "Plan の敵対的レビュー",
        subagent_type = "general-purpose",
+       isolation = "worktree",   # 親の作業ツリーを守る (review-pr 重要原則 4 と同じ二重防御)
        prompt = """
        Issue #<N> の実装計画を敵対的にレビューしてください。
 
@@ -235,7 +256,9 @@ if ERRORS is not empty:
           - Major: 品質や適合性に影響
           - Minor: あれば良いが実装には支障なし
 
-       read-only。git checkout 禁止。
+       read-only。Edit / Write 禁止。`git checkout` / `git switch` / `git branch` 作成 /
+       `gh pr checkout` で作業ツリーや HEAD を変更しない。remote への書き込み
+       (`git push` / `gh pr edit|review|merge` / `gh issue edit` / `gh api` の非 GET) も禁止。
        **捏造禁止**: 存在しない問題を指摘しない。
        **オーバーエンジニアリング禁止**: Issue の要件を超える一般化・抽象化の追加を提案しない。
        """
@@ -306,7 +329,8 @@ if ERRORS is not empty:
 
 5. **ADR 作成**（仕様判断を伴う場合のみ）:
    - 仕様変更を伴わない純粋なバグ修正・リファクタリングでは不要
-   - **配置先・ファイル名規約は `/documentation-standards` 参照**
+   - **配置先・ファイル名規約は利用リポの `documentation-standards` skill を参照**
+     (無いリポでは `docs/adr/NNNN-<slug>.md` のようにリポ既存の慣例に従う)
    - ADR 本文にタグ（`#auth` `#billing` `#import` 等、業務領域名）を付け、関連 ADR だけを引けるようにする
    - ADRテンプレート:
      ```markdown
@@ -419,17 +443,36 @@ if ERRORS is not empty:
    **Step 4 に進む場合**と**Step 4 をスキップして Step 5 に直結する場合**で
    検証項目が異なる。
 
+   subagent は `isolation: "worktree"` で起動するため **親の未コミット変更を見られない**
+   (worktree は親 HEAD から作られ、作業ツリーの変更も untracked ファイルも入らない)。
+   本 skill はコミットを Step 5 で行うので、ゲート時点の変更は親が **ファイルに書き出して
+   絶対パスで渡す** (create-pr Step 4 の網羅性レビューと同じ方式):
+
+   ```bash
+   GATE="$(git rev-parse --show-toplevel)/docs/temp/gate-step3"
+   mkdir -p "$(dirname "$GATE")"
+   git diff main --stat > "$GATE.stat"
+   git diff main > "$GATE.diff"
+   git status --porcelain --untracked-files=all > "$GATE.status"
+   # untracked の新規ファイルは diff に出ないので、内容も併せて渡す
+   git ls-files --others --exclude-standard | while read -r f; do
+       printf '\n===== %s =====\n' "$f"; cat "$f"; done > "$GATE.untracked"
+   ```
+
    ```text
    Agent(
        description = "Step 3→4/5 入力条件検証",
        subagent_type = "general-purpose",
+       isolation = "worktree",   # 親の作業ツリーを守る (変更内容は上のファイルで渡す)
        prompt = """
        Issue #<N> の Step 3（実装）完了後の入力条件を検証してください。
 
        1. `gh issue view <N> --comments` で Issue 本文と実装計画を読む
-       2. `git diff main --stat`、`git diff main`、`git status` で変更内容を確認
-          （untracked の新規ファイルも検出するため `git status` を含める）
-       3. `git diff main --stat` の出力がドキュメントファイル（.md, .drawio,
+       2. 変更内容は親が書き出した以下のファイルを Read する (worktree 内で
+          `git diff` / `git status` を実行しても親の未コミット変更は見えない):
+          - `<GATE を展開した絶対パス>.stat` / `.diff` (git diff main)
+          - `<GATE を展開した絶対パス>.status` / `.untracked` (untracked の新規ファイルと内容)
+       3. `.stat` の内容がドキュメントファイル（.md, .drawio,
           .gitignore 等）のみであれば「Step 4 スキップ」条件を適用し、
           それ以外は「Step 4 進行」条件を適用する
        4. 以下の条件を検証:
@@ -450,19 +493,25 @@ if ERRORS is not empty:
           - PASS: 全条件を満たしている → 次ステップへ進行可能
           - FAIL: 不足項目を列挙 → Step 3 に戻って補完が必要
 
-       read-only。git checkout 禁止。
+       read-only。Edit / Write 禁止。`git checkout` / `git switch` / `git branch` 作成 /
+       `gh pr checkout` で作業ツリーや HEAD を変更しない。remote への書き込み
+       (`git push` / `gh pr edit|review|merge` / `gh issue edit` / `gh api` の非 GET) も禁止。
        **捏造禁止**: 存在しない問題を指摘しない。
        """
    )
    ```
+
+   ゲート通過後、親は `docs/temp/gate-step3.*` を削除する。
 
    - **PASS** → Step 4 または Step 5 へ進む。セッション管理（後述）を実施
    - **FAIL** → 不足項目を補完し、再度ゲートを通過してから次へ進む
      （最大 3 回。超過時は PO にエスカレーション）
 
 7. 設計資料にフロー図や構成図を含める場合は drawio 形式で作成:
-   - **SVG への変換は `~/.claude/hooks/run-drawio-export.sh` を使う**。`Bash` で `drawio --export` / `Xvfb` を直接呼ばない
-   - drawio / SVG の配置先は `/documentation-standards` 参照
+   - **SVG への変換は `~/.claude/hooks/run-drawio-export.sh <入力.drawio> <出力.svg>` を使う**
+     (settings.json で許可済み。利用リポに project skill `/export-drawio` があればそれ経由でも
+     よい = 同じスクリプトを呼ぶ)。`Bash` で `drawio --export` / `Xvfb` を直接呼ばない
+   - drawio / SVG の配置先は利用リポの `documentation-standards` skill (無ければリポの慣例) に従う
 
 ### Step 4: ブラウザテスト
 
@@ -483,6 +532,7 @@ if ERRORS is not empty:
      | 操作 | 実施する操作手順 |
      | 期待結果 | 期待される結果 |
      | 確認ポイント | 重点的に確認する項目 |
+     | 結果 | PASS / FAIL (実行日、FAIL なら現象) — 項目 3 で記入 |
      ```
 
 3. **ブラウザテスト実行**:
@@ -498,20 +548,24 @@ if ERRORS is not empty:
 5. **[feature] ステップ間ゲート（Step 4 完了時）**:
 
    Step 4 の全作業が完了した時点で、Step 5 の入力条件を検証する。
+   Step 3 のゲートと同じく、変更内容は親が `docs/temp/gate-step4.{stat,diff,status,untracked}`
+   に書き出して絶対パスで渡す (worktree の subagent は親の未コミット変更を見られない)。
 
    ```text
    Agent(
        description = "Step 4→5 入力条件検証",
        subagent_type = "general-purpose",
+       isolation = "worktree",   # 親の作業ツリーを守る (変更内容はファイルで渡す)
        prompt = """
        Issue #<N> の Step 4（ブラウザテスト）完了後の入力条件を検証してください。
 
        1. `gh issue view <N> --comments` で Issue 本文と実装計画を読む
-       2. `git diff main --stat`、`git diff main`、`git status` で変更内容を確認
+       2. 変更内容は親が書き出した `<GATE を展開した絶対パス>.stat` / `.diff` /
+          `.status` / `.untracked` を Read する
        3. 以下の条件を検証:
           - [ ] テスト結果がブラウザテストケースファイルに記録されているか
-                （git diff でテストケースファイルの PASS/FAIL 記録を確認。
-                テスト実行自体は Step 4 項目 3 で担保済み）
+                （`.diff` / `.untracked` でテストケースファイルの「結果」欄の
+                PASS/FAIL 記録を確認。テスト実行自体は Step 4 項目 3 で担保済み）
           - [ ] UI 承認が完了しているか（feature + 画面変更ありの場合）
           - [ ] Plan のステップで Step 4 に割り当てられた成功基準を満たしているか
 
@@ -519,11 +573,15 @@ if ERRORS is not empty:
           - PASS: 全条件を満たしている → Step 5 へ進行可能
           - FAIL: 不足項目を列挙 → Step 4 に戻って補完が必要
 
-       read-only。git checkout 禁止。
+       read-only。Edit / Write 禁止。`git checkout` / `git switch` / `git branch` 作成 /
+       `gh pr checkout` で作業ツリーや HEAD を変更しない。remote への書き込み
+       (`git push` / `gh pr edit|review|merge` / `gh issue edit` / `gh api` の非 GET) も禁止。
        **捏造禁止**: 存在しない問題を指摘しない。
        """
    )
    ```
+
+   ゲート通過後、親は `docs/temp/gate-step4.*` を削除する。
 
    - **PASS** → Step 5 へ進む。セッション管理（後述）を実施
    - **FAIL** → 不足項目を補完し、再度ゲートを通過してから次へ進む
@@ -537,10 +595,11 @@ if ERRORS is not empty:
      (先に push すると `create-pr` Step 5.5 が「既に remote にある」と判定し、
       Step 6 の squash がスキップされる)
    - PR body には必ず `Closes #<issue番号>` を記載
-   - レビュー深度をパスから決定し、`/create-pr` に伝達:
-     - [bug] → `--depth lightweight`
-     - [feature] → `--depth full`
-     - [ops] → `--depth lightweight`
+   - レビュー深度をパスから決定し、Skill ツールの `args` で `/create-pr` に渡す
+     (create-pr Step 0 が解析し、Step 5 で `/review-pr --fix {depth_flag}` に転送する):
+     - [bug] → `/create-pr --depth lightweight`
+     - [feature] → `/create-pr --depth full`
+     - [ops] → `/create-pr --depth lightweight`
 
 ### Step 6: 完了報告
 
@@ -550,7 +609,8 @@ if ERRORS is not empty:
    - テスト結果
 
 2. **完了通知**:
-   - `AskUserQuestion` で awaiting 化:
+   - `AskUserQuestion` で awaiting 化 (PR を作らなかった ops パスでは question を
+     「Issue #<N> の処理が完了しました。Issue コメントの結果を確認してください。」にする):
      ```text
      AskUserQuestion({
          questions: [{
@@ -558,7 +618,7 @@ if ERRORS is not empty:
              header: "対応完了",
              multiSelect: false,
              options: [
-                 {label: "確認する", description: "PR の内容を確認する"},
+                 {label: "確認する", description: "PR の内容を確認する (PR 無しの ops では Issue コメントを確認する)"},
                  {label: "後で", description: "他作業を続ける"}
              ]
          }]
@@ -641,11 +701,12 @@ PR の差分には含めない。
 - context が圧迫されていると自覚した場合（CLAUDE.md「コンテキスト圧迫時」参照）
 - 次ステップが前ステップの詳細な調査過程を必要としない場合
 
-**クリア手順**:
+**クリア手順** (`/clear` は CLI の組み込みコマンドで Claude 自身は実行できない):
 1. セッション要約を生成する
 2. セッションログを `session_logs/` に記録し、書き込んだファイルパスを控える
-3. `/clear` を実行する
-4. クリア後、手順 2 で控えたファイルパスを Read し、
+3. ユーザーに「`/clear` を実行してから、次のファイルを Read するよう指示してください:
+   <手順 2 のパス>」と依頼して停止する (`AskUserQuestion` で awaiting 化)
+4. クリア後の新セッションで、指示されたファイルパスを Read し、
    「要約」セクションを読み込んで次ステップを開始する
 
 **クリアしない場合**: セッション要約の生成とセッションログの記録のみ実施し、
@@ -653,6 +714,10 @@ context を維持したまま次ステップに進む。
 
 ## 注意事項
 
+- frontmatter の `allowed-tools` は「本文で使うツール」を列挙する (事前承認の宣言であって
+  制限ではない)。**Skill ツールと `AskUserQuestion` は列挙しない** (Skill は列挙しなくても
+  呼べ、`AskUserQuestion` は列挙すると awaiting 化に使う PermissionRequest event が
+  抑制されうる。create-issue / create-pr と同じ規約)。MCP ツールは列挙する
 - 全テストが通過するまでコミットしない
 - PR の body には必ず `Closes #<issue番号>` を記載する
 - **設計・実装中に不明点が見つかった場合は、ただちに `/questionnaire` スキルで質問票を生成し回答を求める**。口頭確認やテキストでの往復ではなく、選択式の質問票で構造化して聞くこと。回答を受領したら、その内容を ADR・Issue コメントに反映してから作業を再開する
@@ -682,14 +747,14 @@ context を維持したまま次ステップに進む。
 ## MUSTルール（必須遵守事項）
 
 下記は **issue 対応 workflow に固有のルール**。ドキュメントの配置先・命名規約・
-ディレクトリツリー等の汎用ルールは `/documentation-standards` 側で定義されて
-いるため、本セクションは workflow の必須事項に絞っている。
+ディレクトリツリー等の汎用ルールは利用リポの `documentation-standards` skill 側で
+定義される想定のため、本セクションは workflow の必須事項に絞っている。
 
 - **【ADR必須】** 仕様の追加・変更を伴う Issue では、必ず ADR を作成すること
   - ADR は実装コミットと同一 PR に含める
   - 仕様変更を伴わない純粋なバグ修正・リファクタリングでは ADR 不要
   - ADR 本文にはタグ（`#auth` `#billing` `#import` 等、業務領域名）を付け、検索性を確保する
-  - 配置先・ファイル名規約は `/documentation-standards` 参照
+  - 配置先・ファイル名規約は利用リポの `documentation-standards` skill を参照 (無ければリポの慣例)
 - **【ドキュメントリンク必須】** 成果物にドキュメント（ADR 等の Markdown ファイル）が含まれる場合、PR の body に必ず「成果物リンク」セクションを設け、GitHub 上で閲覧可能なリンクを記載すること
   - リンク形式: `https://github.com/<owner>/<repo>/blob/<branch>/<path>`
   - リンク漏れは絶対に許容しない

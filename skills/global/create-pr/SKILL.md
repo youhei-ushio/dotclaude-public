@@ -1,12 +1,12 @@
 ---
 name: create-pr
-description: 現在のブランチから PR を作成し、base 同期・ブラウザテスト・PR 本文初期化を行ったあと `review-pr` skill にセルフレビュー (Reviewer A/B + Fact-checker、最大 5 巡) を委譲し、最後に awaiting 化する。「PR作成して」「PRを作って」のような自然言語で起動。一時ファイル経由で PR 本文の # 行問題を回避。
+description: 現在のブランチから PR を作成し、base 同期・ブラウザテスト・PR 本文初期化を行ったあと `review-pr` skill にセルフレビュー (--depth で Correctness/Security/Impact + Analyst、フラグなしで Reviewer A/B + Fact-checker) を委譲し、最後に awaiting 化する。「PR作成して」「PRを作って」のような自然言語で起動。一時ファイル経由で PR 本文の # 行問題を回避。
 allowed-tools: Read, Edit, Write, Grep, Glob, Bash, Agent, mcp__playwright__browser_navigate, mcp__playwright__browser_click, mcp__playwright__browser_type, mcp__playwright__browser_evaluate, mcp__playwright__browser_resize, mcp__playwright__browser_take_screenshot, mcp__playwright__browser_snapshot, mcp__playwright__browser_tab_select, mcp__playwright__browser_console_messages
 ---
 
 # プルリクエスト作成
 
-「PR 作って」と言われたら、その PR を **「独立セルフレビューで指摘が無くなった (= auto-fix が 0 件) 状態」** にして戻す。最大 5 巡まで自動で回す。
+「PR 作って」と言われたら、その PR を **「独立セルフレビューで指摘が無くなった (= auto-fix が 0 件) 状態」** にして戻す。巡数上限 (ITER_MAX) は `--depth` で決まる (lightweight 1 / full 3 / 指定なし 5) の範囲で自動で回す。
 
 途中で人間の判断が必要なのは:
 
@@ -15,11 +15,11 @@ allowed-tools: Read, Edit, Write, Grep, Glob, Bash, Agent, mcp__playwright__brow
 - ブラウザテストが 3 回連続で失敗したとき
 - ブラウザテストで回帰が出たとき
 
-それ以外は全自動で進める。**「指摘 0 件で自然終了」が基本ゴール、5 巡到達は警戒シグナル** (修正が新たな問題を呼んでいる / レビュアーが新しい観点を毎巡見つけて収束しない可能性)。
+それ以外は全自動で進める。**「指摘 0 件で自然終了」が基本ゴール、ITER_MAX 到達は警戒シグナル** (修正が新たな問題を呼んでいる / レビュアーが新しい観点を毎巡見つけて収束しない可能性。lightweight は 1 巡固定なので該当しない)。
 
 ## 短縮禁止
 
-Step 5 で委譲する `review-pr` skill のレビュー構成 (Reviewer A / B 2 名並列 + Fact-checker 1 名 = 3 エージェント並列) と巡数上限 (5 巡) を、create-pr 呼び出し側から独断で短縮してはならない (例: 「小さい修正だから 1 名で」「diff が少ないから 1 巡で」等)。
+Step 5 で委譲する `review-pr` skill のレビュー構成 (`--depth` 指定時: Correctness / Security / Impact + Analyst、フラグなし: Reviewer A / B 2 名並列 + Fact-checker 1 名) と巡数上限を、create-pr 呼び出し側から独断で短縮してはならない (例: 「小さい修正だから 1 名で」「diff が少ないから 1 巡で」等)。
 
 短縮禁止の **正本・理由・実例・具体的に禁止される行動** は `skills/global/review-pr/SKILL.md` の「短縮禁止」セクション参照。create-pr 側は委譲時に短縮指示を渡さず、review-pr の判定に任せる。
 
@@ -28,6 +28,42 @@ Step 5 で委譲する `review-pr` skill のレビュー構成 (Reviewer A / B 2
 ---
 
 ## 手順
+
+### Step 0: 引数の解析 (`--depth` の受け取り)
+
+本 skill の **`args` パラメータ (Skill ツール)** を解析する。受け取るのは
+`--depth lightweight` / `--depth full` のみで、resolve-issue skill が Issue の
+種別から決めて渡す (`/create-pr --depth lightweight` 等)。create-pr 単独起動では
+指定なし = legacy (全観点、最大 5 巡):
+
+```text
+DEPTH_FLAG=""            # Step 5 で /review-pr にそのまま転送する文字列
+EXPECT_DEPTH_VALUE=False
+for tok in $args:        # 擬似コード: $args を空白区切りでトークン化したものを順に処理
+    if EXPECT_DEPTH_VALUE:
+        if tok not in ("lightweight", "full"):
+            echo "[create-pr] --depth の値が不正です: ${tok} (lightweight | full)"
+            中断 (skill return)
+        DEPTH_FLAG = "--depth " + tok
+        EXPECT_DEPTH_VALUE = False
+    elif tok == "--depth":
+        if DEPTH_FLAG != "":
+            echo "[create-pr] --depth が重複しています"
+            中断 (skill return)
+        EXPECT_DEPTH_VALUE = True
+    elif tok starts with "-":
+        echo "[create-pr] 未知のフラグです: ${tok}"
+        中断 (skill return)
+    else:
+        pass   # フラグ以外のトークン (自然言語の補足) は無視する
+if EXPECT_DEPTH_VALUE:
+    echo "[create-pr] --depth に値がありません (lightweight | full)"
+    中断 (skill return)
+```
+
+**depth 独自付与の禁止**: create-pr が PR の内容・規模・難易度・変更ファイル種別を
+判断して独自に `--depth` を決めることは**禁止**する (短縮禁止セクション参照)。
+`DEPTH_FLAG` は `args` から受け取った値だけを持つ。
 
 ### Step 1: 状態確認
 
@@ -51,6 +87,10 @@ if [ -z "$BASE" ]; then
         BASE=main   # 最終フォールバック
     fi
 fi
+
+# 一時ファイル用ディレクトリを確保 (review-pr Step 0.2 でも作るが、
+# create-pr 単独起動時にも必要。冪等なので重複しても問題ない)
+mkdir -p "$REPO_ROOT/docs/temp"
 ```
 
 以下を並列で実行:
@@ -152,12 +192,6 @@ echo "$BRANCH" > "$REPO_ROOT/docs/temp/.pr-body.owner"
 ## 成果物リンク
 （ドキュメント成果物がある場合のみ）
 
-## ブラウザテスト
-（**Step 4 実施後に自動追記される**。見出しは `## ブラウザテスト` リテラルで固定: review-pr Step 0.4 の `BROWSER_TEST_DONE` 判定キー。Step 3 時点ではこのセクションを書かないこと — Step 4 skip 時は False が正しい挙動）
-
-## 対応履歴
-（Step 5 セルフレビュー実施後、毎巡 review-pr Step 4.5 で追加・更新する。実施前は省略）
-
 ## Test plan
 - テスト内容
 
@@ -166,25 +200,14 @@ Closes #<issue 番号>
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
-##### 「対応履歴」セクションテンプレート
+##### Step 3 時点で書かないセクション
 
-review-pr Step 4.5 で巡ごとに追記する。実施しなかった巡は記載しない:
-
-```markdown
-## 対応履歴
-
-### 1 巡目
-- レビュアー: 2 名 / Fact-checker: 1 名
-- agreement 2/2: <件数> 件
-- agreement 1/2: <件数> 件
-- 分類: auto-fix <件数> / silent-reject <件数> / escalate <件数>
-- 主な auto-fix: <短い箇条書き 2-3 件>
-- silent-reject 内訳: <件数> 件 (主な理由: 事実誤認 N 件 / 主観 1 票 N 件)
-- escalate (あれば): <内容>
-
-### 2 巡目
-...
-```
+- `## ブラウザテスト`: **Step 4 実施後に自動追記される** (Step 4 の 8 参照)。見出しは
+  `## ブラウザテスト` リテラルで固定 (review-pr Step 0.4 の `BROWSER_TEST_DONE` 判定キー)。
+  Step 3 時点でこの見出しを書くと、Step 4 を skip したときも True になるので書かない
+- `## 対応履歴`: Step 5 のセルフレビューで毎巡 review-pr Step 4.5 が追加・更新する。
+  テンプレートと挿入位置は `skills/global/review-pr/references/fix-steps.md` の Step 4.5 が正本
+  (本 skill では別途定義しない)
 
 #### Critical Decisions 分析
 
@@ -258,7 +281,7 @@ git diff --name-only "origin/$BASE"...HEAD | grep -E '\.(blade\.php|vue|tsx|jsx)
    やむを得ず実行できないパスがある場合は理由と共に明示する（「やらなかった」ではなく「できない理由」を具体的に）
 6. **失敗時のリトライ**:
    - 1 件でも失敗したら **修正してリトライ**
-   - **同一ケースが** 3 回連続失敗したら **ユーザーに報告して停止** (別ケースの失敗とは合算しない)
+   - **同一ケースが** 3 回連続失敗したら、`rm -f "$REPO_ROOT/docs/temp/pr-body.md" "$REPO_ROOT/docs/temp/.pr-body.owner" "$REPO_ROOT/docs/temp/review-"*.diff` で中間ファイルを掃除してから **ユーザーに報告して停止** (別ケースの失敗とは合算しない)
 7. **テスト網羅性の敵対的レビュー**: ブラウザテスト完了後、独立エージェントで
    テストの網羅性を検証する。テスト実行者自身は「やった」バイアスがかかるため、
    別の視点で「本当に全パスを通したか」を突く。
@@ -273,10 +296,12 @@ git diff --name-only "origin/$BASE"...HEAD | grep -E '\.(blade\.php|vue|tsx|jsx)
    Agent(
        description = "ブラウザテスト網羅性の敵対的レビュー",
        subagent_type = "general-purpose",
+       isolation = "worktree",   # 親の作業ツリーを守る (review-pr 重要原則 4 と同じ二重防御)
        prompt = """
        対象ブランチのブラウザテスト結果を敵対的にレビューしてください。
 
-       1. `docs/temp/review-browser.diff` を Read して実装内容を把握
+       1. `<REPO_ROOT を展開した絶対パス>/docs/temp/review-browser.diff` を Read して実装内容を把握
+          (親が `$REPO_ROOT` を展開してから prompt に埋め込む。subagent 側では変数が未定義)
        2. 実装から導かれる「テストすべき全操作パス」を列挙
        3. 以下を指摘:
           - 実装にあるのにテストされていない操作パス
@@ -284,7 +309,8 @@ git diff --name-only "origin/$BASE"...HEAD | grep -E '\.(blade\.php|vue|tsx|jsx)
           - エッジケース（0件、上限、重複操作、同時操作）
           - テストデータ不足で本来のロジックを通っていない可能性
 
-       read-only。git checkout 禁止。
+       read-only。Edit / Write 禁止。git checkout / switch / gh pr checkout で作業ツリーを
+       変更しない。remote への書き込み (git push / gh pr edit|review|merge / gh api の非 GET) も禁止。
        """
    )
    ```
@@ -336,32 +362,33 @@ Skill ツール経由で呼び出す:
 経路 A では PR が未作成のため `gh pr view` による author 自動判定が効かず、
 `--fix` を明示しないと review-only にフォールバックする。
 
-`depth_flag` は呼び出し元（resolve-issue skill）から引き継ぐ**のみ**。指定がある場合:
+`{depth_flag}` は Step 0 で `args` から受け取った `DEPTH_FLAG` をそのまま入れる
+(空なら `/review-pr --fix`)。指定がある場合:
 - `--depth lightweight` — バグ修正パス: Correctness + Security のみ、1 巡
 - `--depth full` — 機能追加パス: Correctness + Security + Impact、最大 3 巡
 
-create-pr 単独起動時（resolve-issue skill 経由でない場合）は `depth_flag` なし = 現行動作（全観点、最大 5 巡）。
+create-pr 単独起動時（resolve-issue skill 経由でない場合）は `DEPTH_FLAG` なし = 現行動作（全観点、最大 5 巡）。
 
 **depth 独自付与の禁止**: create-pr が PR の内容・規模・難易度・変更ファイル種別を
-判断して独自に `--depth` を付与することは**禁止**する。`depth_flag` は呼び出し元
-（resolve-issue skill）から渡された値をそのまま転送するか、渡されていなければフラグなしで
-`/review-pr` を呼ぶ。「skill ファイルだけの変更だから lightweight でよい」
-「diff が小さいから lightweight」等の ad-hoc 判断は短縮禁止ルールの適用対象。
+判断して独自に `--depth` を付与することは**禁止**する (Step 0 参照)。
+「skill ファイルだけの変更だから lightweight でよい」「diff が小さいから lightweight」
+等の ad-hoc 判断は短縮禁止ルールの適用対象。
 
 `review-pr` は内部で以下を全自動で実行する (詳細は
 `skills/global/review-pr/SKILL.md` 参照):
 
 - 毎巡先頭で base 再同期 (rebase)
 - 毎巡 `git diff "origin/$BASE"...HEAD` を diff ファイルに書き出し、レビュアーに渡す
-- Reviewer A / B + Fact-checker の 3 エージェント並列レビュー (worktree
+- `--depth` 指定時: Correctness / Security / Impact + Analyst の並列レビュー、
+  フラグなし: Reviewer A / B + Fact-checker の 3 エージェント並列レビュー (worktree
   分離)
 - 指摘の分類 (silent-reject / escalate / auto-fix)
 - auto-fix の Edit/Write 実装 + commit
 - `docs/temp/pr-body.md`「対応履歴」セクション追記
 - UI 影響時はブラウザテスト再走査
-- 最大 5 巡。`auto-fix = 0` で自然終了 / escalate / ブラウザ回帰で
-  中断
-- 3 巡目以降は Reviewer プロンプトを「マージブロッカー級のみ」に
+- 巡数上限は depth 依存 (lightweight 1 / full 3 / legacy 5)。`auto-fix = 0` または
+  fix-stable 収束で自然終了 / escalate / ブラウザ回帰で中断
+- 3 巡目以降は各ロールのプロンプトを「マージブロッカー級のみ」に
   自動制約
 
 #### 委譲時の制約
@@ -386,20 +413,34 @@ PR があればユーザーはブラウザで diff を見て判断でき、判�
 Step 8 の最終報告で escalate 内容と「ユーザー判断待ちである」ことを明記する。
 Step 10 の `AskUserQuestion` で escalate 内容を提示する。
 
-**採らない案**: 「escalate 時は push せず cleanup も skip する」案は、
-`docs/temp/` に中間ファイルが残り続け、次回起動時の所有権判定が不定になるため
-採らない。
+**採らない案**: 「escalate 時は push せず cleanup も skip する」案は採らない。
+理由: escalate 時も PR を作ることでユーザーが diff を確認でき、判断後に
+続きを再開できる。
+
+Step 9 に到達しない中断経路は 5 つあり、`docs/temp/` の扱いは経路ごとに違う:
+
+| 中断経路 | `docs/temp/` の扱い | 理由 |
+|---|---|---|
+| Step 1: `REPO_ROOT` が解決できない | 何もしない | Step 3 より前で、`mkdir -p` にも到達しない |
+| Step 2: rebase コンフリクトでユーザーが中止 | 何もしない | Step 3 より前なので pr-body.md はまだ無い |
+| Step 4: ブラウザテスト 3 回連続失敗 | 中断箇所で `rm -f` | レビュー前なので対応履歴は無く、再実行は Step 3 の Write で作り直せる |
+| Step 5: 委譲先 `review-pr` が Step 0 で中断して戻る (Step 0.2 の `REPO_ROOT` 解決不能 / Step 0.2.5 の `gh api user` と author 取得の両方失敗。後者は create-pr が `--fix` を渡すので経路 A では到達しない) | **残す** | 委譲先が `中断 (skill return)` で戻った場合、create-pr も Step 5.5 以降に進まず**そこで中断する**。pr-body.md は Step 3 の作成物でレビュー前なので、残しても再実行時に Step 3 の Write が上書きする。消す処理を足す価値が無い |
+| Step 7 (経路 B): remote-tracking ref 不在で force push 不可 | **残す** | レビュー後で、pr-body.md に N 巡分の対応履歴がある。案内先の手動 PR 作成にこのファイルが要り、PR 未作成なので消すと復元できない |
+
+(`review-pr` 内の escalate / base-conflict / browser-regression は create-pr を
+中断せず Step 5.5 以降に進むので、ここには含めない。`review-pr` が中断で戻るのは
+上表 Step 5 の行の 2 経路だけで、いずれも Step 1 (レビュー本体) より前に起きる)
 
 #### Skill 委譲と subagent 独立性の整理
 
 `review-pr` を Skill ツールで呼び出すと、`review-pr` 本体は **親
 (create-pr) と同一コンテキストで走る**。これがバイアスにならないのは、
 セルフレビューにおける「コードを書いた本人による評価」を禁じている
-真の対象は **Reviewer A/B/Fact-checker の 3 subagent** (= 実際の指摘
-列挙と事実検証を行う層) であり、orchestration 層 (= `review-pr` 本体)
-の独立性ではないため。`review-pr` の Step 2 で必ず Agent ツール経由
-(`isolation: "worktree"`) で 3 subagent を spawn することで、レビュー
-評価の独立性は構造的に担保される。
+真の対象は **レビュー subagent** (`--depth` 指定時: Correctness / Security /
+Impact + Analyst、フラグなし: Reviewer A/B + Fact-checker) であり、
+orchestration 層 (= `review-pr` 本体) の独立性ではないため。`review-pr` の
+Step 2 で必ず Agent ツール経由 (`isolation: "worktree"`) で subagent を
+spawn することで、レビュー評価の独立性は構造的に担保される。
 
 ### Step 5.5: リモートブランチ判定 (Step 6・7 共通)
 
@@ -463,38 +504,57 @@ fi
 
 ### Step 7: push + PR 作成
 
+3 つの小節に分かれる。**経路 B (force push) だけを独立した見出しにしてある**のは、
+「fix 経路に lease 付き force push が現れないこと」を固定する静的検査を置く場合に、
+「経路 B: force push」見出しの節だけを除外できるようにするため。経路 A の通常 push
+(7-1) と PR 作成 (7-2) は検査対象に残り、「経路 A は force を使わない」が検査で担保される。
+この小節の外に当該コマンド名を書くと検査が落ちる (意図どおり)。
+
+#### Step 7-1: push
+
 ```bash
 # BRANCH / REMOTE_BRANCH_EXISTS は Step 5.5 で判定済み
-# --- push ---
 gh auth setup-git
 if [ "$REMOTE_BRANCH_EXISTS" -eq 0 ]; then
-    # リモートに無い (squash 済み) → 通常 push
+    # 経路 A: リモートに無い (squash 済み) → 通常 push。force は使わない
     git push -u origin "$BRANCH"
 else
-    # 経路 B: リモートに存在する既存ブランチ
-    # **経路 B の force push は `--force-with-lease` のみ。`--force` は禁止**
-    # fetch 前に SHA を捕まえてリースを固定する。fetch 後に expect 値なしで
-    # --force-with-lease を使うと、他人の新規コミットも黙って吹き飛ばす
-    EXPECTED=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo "")
-    git fetch origin "$BRANCH"
-    LOCAL_AHEAD=$(git rev-list --count "origin/$BRANCH"..HEAD 2>/dev/null || echo 0)
-    REMOTE_AHEAD=$(git rev-list --count "HEAD..origin/$BRANCH" 2>/dev/null || echo 0)
-    if [ "$REMOTE_AHEAD" -gt 0 ] && [ "$LOCAL_AHEAD" -gt 0 ]; then
-        # 分岐している = rebase で書き換わった
-        if [ -n "$EXPECTED" ]; then
-            git push --force-with-lease="refs/heads/$BRANCH:$EXPECTED"
-        else
-            # ローカルに remote-tracking ref が無い → リースを張れない
-            echo "[create-pr] remote-tracking ref が無いため force push できません"
-            echo "手動で git push --force-with-lease を実行してください"
-            中断 (skill return)
-        fi
-    else
-        git push
-    fi
+    # 経路 B: リモートに存在する既存ブランチ → 下の「経路 B: force push」を実行
+    :
 fi
+```
 
-# --- PR 作成 or 更新 ---
+#### 経路 B: force push (リモートに存在する既存ブランチ)
+
+**経路 B の force push は `--force-with-lease` のみ。`--force` は禁止。**
+fetch 前に SHA を捕まえてリースを固定する。fetch 後に expect 値なしで
+`--force-with-lease` を使うと、他人の新規コミットも黙って吹き飛ばす。
+
+```bash
+EXPECTED=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo "")
+git fetch origin "$BRANCH"
+LOCAL_AHEAD=$(git rev-list --count "origin/$BRANCH"..HEAD 2>/dev/null || echo 0)
+REMOTE_AHEAD=$(git rev-list --count "HEAD..origin/$BRANCH" 2>/dev/null || echo 0)
+if [ "$REMOTE_AHEAD" -gt 0 ] && [ "$LOCAL_AHEAD" -gt 0 ]; then
+    # 分岐している = rebase で書き換わった
+    if [ -n "$EXPECTED" ]; then
+        git push --force-with-lease="refs/heads/$BRANCH:$EXPECTED"
+    else
+        # ローカルに remote-tracking ref が無い → リースを張れない
+        echo "[create-pr] remote-tracking ref が無いため force push できません"
+        echo "手動で git push --force-with-lease を実行してください"
+        # docs/temp/ は消さない: 上の案内どおり手動で PR を作るのに pr-body.md
+        # (レビュー N 巡分の対応履歴を含む) が要る。PR 未作成なので消すと復元手段が無い
+        中断 (skill return)
+    fi
+else
+    git push
+fi
+```
+
+#### Step 7-2: PR 作成 or 更新
+
+```bash
 # push 済みだが PR が無いブランチ (中断の残骸、閉じた PR の後) に対応するため
 # upstream の有無ではなく PR の存在で分岐する
 EXISTING_PR=$(gh pr view --json number -q .number 2>/dev/null || echo "")
@@ -542,7 +602,7 @@ Step 9 クリーンアップを skip するリスクがある)。
 > **本 skill 自体は視覚的な通知機構を持たない**。応答待ちの可視化は環境側
 > (statusline / hook / 外部オーケストレータ) に委ね、それらが無い環境では
 > `AskUserQuestion` による停止そのものが合図になる。
-> 同じ注記が `edit-issue` / `create-issue` にもある。
+> 同じ注記が `create-issue` にもある。
 
 呼び出し例 (`AskUserQuestion` の正しい schema = `questions: [...]` リスト形式):
 
@@ -608,5 +668,5 @@ skill が「ユーザー確認を取って停止する」のは以下のとき�
 - `docs/temp/` は `.gitignore` 対象外なので Step 9 で必ず掃除
 - PR 本文を `--body` で直接渡す方法は使わない (`#` 行問題)
 - セルフレビューループ中の commit message・PR 本文の毎巡更新方針は `review-pr` 側に集約 (本 skill では別途定義しない)
-- **指摘 0 件で自然終了 = 基本ゴール / 5 巡到達 = 警戒シグナル または収束** (詳細解釈は `skills/global/review-pr/SKILL.md` 冒頭参照)。Step 8 の報告では 5 巡到達ケースの「巡ごとの auto-fix 件数推移」と「収束 / 警戒の判定」を明記すること (`review-pr` から受領した出力をそのまま転載でよい)
+- **指摘 0 件で自然終了 = 基本ゴール / ITER_MAX 到達 = 警戒シグナル または収束** (詳細解釈は `skills/global/review-pr/SKILL.md` 冒頭参照)。Step 8 の報告では ITER_MAX 到達ケースの「巡ごとの auto-fix 件数推移」と「収束 / 警戒の判定」を明記すること (`review-pr` から受領した出力をそのまま転載でよい)
 - **Critical Decisions は省略不可**: Step 3 の 4 軸分析は全 PR で必ず実施する。notApplicable でも明示的に宣言すること。省略は許容しない

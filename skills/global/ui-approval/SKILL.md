@@ -50,7 +50,7 @@ LAN 越しの Web UI でブラウザから操作する。
 各項目:
 - `id`: 一意の識別子
 - `label`: 画面の名前（Web UI のタイトルに表示）
-- `image_path`: スクショのファイルパス（リポジトリルートからの相対パス）
+- `image_path`: スクショのファイルパス（リポジトリルート = git toplevel からの相対パス。サーバーは git toplevel、取れなければ cwd を基点に解決し、ここに列挙したファイルだけを配信する。絶対パス・基点の外に出るパス (symlink の解決先も含む)・キーの欠落・ファイルが存在しない場合は起動時エラー）
 - `description`: この画面で何が表示されているかの説明
 - `design_rationale`: なぜこのデザインにしたかの根拠
 
@@ -65,6 +65,7 @@ python3 ~/.claude/skills/ui-approval/serve-ui-approval.py \
 
 - `port` 省略時は `8786`
 - サーバーは `0.0.0.0` に bind し、起動時に LAN アクセス URL を stdout に出力
+- URL には起動ごとに生成されるトークンが `?t=<token>` として付く。**stdout の URL をそのままユーザーに渡す**（トークン無しで開くと 403。送信もこのトークンで照合される）
 - ループバックでの表示確認は不要（LAN IP でブラウザから開ければ十分）。
   `curl 127.0.0.1` や Playwright での自己アクセスは試みない
 
@@ -80,11 +81,13 @@ python3 ~/.claude/skills/ui-approval/serve-ui-approval.py \
 
 ### Step 4: 結果の取り込み
 
-送信するとサーバーが JSON に結果を書き戻し、終了する。
+送信するとサーバーが同じ JSON に `results` キーで結果を書き戻し（`items` は温存）、終了する。
 
 ```json
 {
-  "items": [
+  "title": "...",
+  "items": [ ...入力のまま... ],
+  "results": [
     {
       "id": "screen-1",
       "status": "approved"
@@ -98,9 +101,11 @@ python3 ~/.claude/skills/ui-approval/serve-ui-approval.py \
 }
 ```
 
+`results` を読んで判定する（`items` には status は入らない）。
+
 結果に基づいて:
 - `approved` → 変更不要
-- `rejected` → コメントの内容に従って修正し、修正後に再度スクショを撮って再レビュー
+- `rejected` → コメントの内容に従って修正し、修正後に再度スクショを撮って再レビュー（`rejected` にはコメントが必須。空コメントの指摘は UI で送信できず、サーバーも 400 で拒否する）
 
 **rejected が 1 件以上ある場合**: 修正 → スクショ更新 → 再度 Step 2 から実行。
 全件 approved になるまで繰り返す。
@@ -119,7 +124,12 @@ PO の UI 承認結果を **feedback 型メモリ** として保存し、将来�
    - ボタン配置: 主操作の位置、危険操作の確認
    - レスポンシブ: モバイル対応の要否
 
-2. 以下の形式で**メモリファイルを作成**する:
+2. 以下の形式で**メモリファイルを作成**する (配置先は Claude Code の auto-memory
+   ディレクトリ `~/.claude/projects/<project>/memory/ui-judgment-{feature-slug}.md`。
+   `<project>` は **メイン checkout** の絶対パス (`git rev-parse --path-format=absolute
+   --git-common-dir` の親) の `/` を `-` に置換したもの。例: `/home/user/repos/app` →
+   `-home-user-repos-app`。worktree の cwd から導くと別 project になるので使わない。
+   `指摘:` は要旨に言い換え、個人名・連絡先は書かない):
 
 ```markdown
 ---
@@ -146,11 +156,11 @@ metadata:
 
 ## 他スキルからの呼び出し
 
-- **`/resolve-issue` Step 4 (feature + 画面変更あり)**: テスト通過後、PR 作成前にユーザー承認を得る
+- **`/resolve-issue` Step 4 (feature + 画面変更あり)**: ブラウザテスト通過後、PR 作成前にユーザー承認を得る
 - 設計段階のワイヤーフレーム承認にも使える（スクショの代わりにワイヤーフレーム画像を渡す）
 
 ## 注意事項
 
-- LAN 限定・認証なし。信頼できるネットワークでのみ起動する
-- 画像ファイルはサーバーから直接配信する（base64 エンコードではなくファイルパスで参照）
-- レビュー結果は JSON で永続化されるため、中断しても再開可能
+- LAN 限定。信頼できるネットワークでのみ起動する。防御はトークン照合（`GET /` と `/image` は `?t=`、`POST /submit` は `X-Review-Token` ヘッダ）と画像の allowlist 配信のみで、TLS やユーザー認証は無い。単一スレッドのサーバーなので、認証前の接続占有（LAN 内からの DoS）は防がない
+- 画像ファイルはサーバーから直接配信する（base64 エンコードではなくファイルパスで参照）。配信は allowlist の相対パスのみで、画像の取得にもトークンが要る
+- 送信完了時点の結果だけが JSON (`results`) に残る。送信前にブラウザをリロード / 閉じると入力は失われるので、再度サーバーを起動してやり直す。起動時に前回の `results` はファイルから消えるので、未送信で止めた場合に古い結果が残ることはない

@@ -45,6 +45,8 @@ git diff "origin/$BASE"...HEAD --name-only | 対応テストの有無を検査
 **Step 4 先頭 (early-break 判定)** — fix モード:
 
 ```text
+FIXED_KEYS_THIS_ROUND = set()   # 本巡分を毎巡リセット
+
 if escalate が 1 件以上:
     ESCALATE_REASON = "review-finding"
     Step 4.5 へ (escalate 内容のみで対応履歴に追記、本巡 commit 無し)
@@ -63,9 +65,11 @@ git add <変更ファイル>
 git commit -m "chore: <iteration> 巡目レビュー指摘反映"
 ```
 
-**fix-stable 収束キーの更新**: auto-fix した全指摘の `convergence_key` を
-kind 名前空間付き (`"defect:" + key` / `"judgment:" + key`) で `RESOLVED_KEYS`
-に追加する。次巡の Step 2.1 でレビュアープロンプトに除外指示として渡される。
+**fix-stable 収束キーの記録**: auto-fix した全指摘の `convergence_key` を
+kind 名前空間付き (`"defect:" + key` / `"judgment:" + key`) で
+`FIXED_KEYS_THIS_ROUND` に集める。**`RESOLVED_KEYS` にはここでは足さない**
+(Step 6 の収束判定が「前巡までの分」と比較するため。判定後に Step 6 が足す)。
+次巡の Step 2.1 では `RESOLVED_KEYS` がレビュアープロンプトに除外指示として渡される。
 
 ---
 
@@ -87,6 +91,8 @@ kind 名前空間付き (`"defect:" + key` / `"judgment:" + key`) で `RESOLVED_
 `$REPO_ROOT/docs/temp/pr-body.md` を編集:
 
 - 既存の Summary / 設計判断 / 維持されたノウハウは保持
+- 「対応履歴」セクションの位置は `## Test plan` の直前 (`## ブラウザテスト` が
+  ある場合はその後ろ)。create-pr Step 3 のテンプレートには書かず、初回はここで挿入する
 - 「対応履歴」セクションを追加または更新し、今巡の auto-fix /
   escalate / silent-reject の件数と主な内訳を 3-5 行で要約
 - 本巡 commit がある場合: `### N 巡目`
@@ -105,7 +111,7 @@ kind 名前空間付き (`"defect:" + key` / `"judgment:" + key`) で `RESOLVED_
 - 主な auto-fix: <短い箇条書き 2-3 件>
 - silent-reject 内訳: <件数> 件 (主な理由: 事実誤認 N 件 / 主観 1 票 N 件)
 - escalate (あれば): <内容>
-- 収束キー解消: <件数> 件 (RESOLVED_KEYS に追加)
+- 収束キー解消: <件数> 件 (FIXED_KEYS_THIS_ROUND。Step 6 で RESOLVED_KEYS に反映)
 
 ### 2 巡目
 ...

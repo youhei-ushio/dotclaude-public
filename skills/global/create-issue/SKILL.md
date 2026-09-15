@@ -1,7 +1,7 @@
 ---
 name: create-issue
 description: GitHub Issueを作成します。一時ファイルを使ってIssue本文の#行問題を回避。「issue作成して」「issueを追加して」のような自然言語で起動します。gh issue createコマンドを直接使わず、自発的にIssue作成する場合も必ずこのスキルを使用すること。
-allowed-tools: Read, Grep, Glob, Bash, Write
+allowed-tools: Read, Grep, Glob, Bash, Write, mcp__claude_ai_Gmail__search_threads
 ---
 
 # GitHub Issue作成
@@ -95,8 +95,10 @@ AskUserQuestion({
 
 > **注:** AskUserQuestion の allowed-tools 非列挙については Step 6 の注記を参照。
 
-3. 「質問票を実施」→ 質問票生成前に以下の順序で既知回答を探索する:
-   1. `knowledge/<domain>/` を検索（domain は Issue の業務領域から判定）。
+3. 「質問票を実施」→ 質問票生成前に以下の順序で既知回答を探索する
+   (`knowledge/` は利用リポ側の資産。無ければ手順 1 と永続化を skip する。
+   ナレッジファイルの形式は resolve-issue skill Step 2 [feature] に定義):
+   1. `knowledge/<domain>/` を検索（利用リポにある場合。domain は Issue の業務領域から判定）。
       既知の Q&A で回答できる質問は質問票から除外する。
       `last_verified` が 6 ヶ月以上前のナレッジは「要再確認」として除外せず質問票に含める
       （resolve-issue skill Step 2 と同一の陳腐化チェック規約）
@@ -125,7 +127,11 @@ Issue本文に `##` などの `#` で始まる行が含まれると、Claude Cod
 gh issue create --repo <owner>/<repo> --title "<タイトル>" --body-file docs/temp/issue-body.md --label bug
 # feature の場合:
 gh issue create --repo <owner>/<repo> --title "<タイトル>" --body-file docs/temp/issue-body.md --label enhancement
-# ops の場合:
+# ops の場合: ops ラベルは GitHub 既定ラベルではないので、無いリポでは先に作る
+# (bug / enhancement は既定で存在する。無いラベルを --label に渡すと作成全体が失敗する。
+#  gh label list の既定 --limit は 30 なので上限を上げて取りこぼしを防ぐ)
+gh label list --repo <owner>/<repo> --limit 1000 --json name -q '.[].name' | grep -qx ops \
+  || gh label create ops --repo <owner>/<repo> --color 0E8A16 --description "処理依頼・データ修正"
 gh issue create --repo <owner>/<repo> --title "<タイトル>" --body-file docs/temp/issue-body.md --label ops
 # ↓
 rm docs/temp/issue-body.md

@@ -18,11 +18,7 @@ UI からは手動操作が必要で、いったん見た / 通知を受け取�
 
 ### 6.6.1 コメント markdown の生成
 
-書き出し先ディレクトリの存在を担保してから Write する:
-
-```bash
-# $REPO_ROOT は Step 0.2 で解決済み。mkdir -p も Step 0.2 で実施済み
-```
+書き出し先ディレクトリは Step 0.2 で `mkdir -p "$REPO_ROOT/docs/temp"` 済み。
 
 `$REPO_ROOT/docs/temp/pr${N}-review-comment.md` に書き出す (ファイル名の `${N}` は
 親エージェントが PR 番号に展開してから Write する。以下テンプレート内の
@@ -134,7 +130,7 @@ AskUserQuestion({
 承認後に投稿し、成功可否を `POSTED_TO_GITHUB` に反映する:
 
 ```bash
-if gh pr review "$N" --repo "$OWNER_REPO" --comment --body-file "docs/temp/pr${N}-review-comment.md"; then
+if gh pr review "$N" --repo "$OWNER_REPO" --comment --body-file "$REPO_ROOT/docs/temp/pr${N}-review-comment.md"; then
     POSTED_TO_GITHUB=True
     echo "[review-pr] PR #$N に review コメントを投稿しました"
 else
@@ -145,14 +141,14 @@ else
 fi
 ```
 
-**`--repo "$OWNER_REPO"` の必須化**: review-only モードは cwd が必ずしも
-レビュー対象 PR のリポと一致しない (例: 別 parallel から ad-hoc で他リポの
-PR をレビューするケース、レビュー対象 PR のリポを clone していないケース等)。
-`gh pr <subcommand> "$N"` は `--repo` 無しだと cwd の git remote から PR を
-解決するため、別リポの PR に誤って投稿する事故が起きうる。Step 0.2 で
-`$OWNER_REPO` を取得済みなので、review-only の全 `gh pr` 系コマンドは
-`--repo "$OWNER_REPO"` を明示する規約。fix モード側は基本「自分の PR を
-ローカル展開して fix する」前提なので `--repo` 必須化までは要求しない。
+**`--repo "$OWNER_REPO"` の必須化**: 本 skill は **レビュー対象 PR のリポの
+clone 内 (cwd) から呼ぶ前提** で、Step 0.2 は `$OWNER_REPO` を cwd の origin
+remote から導出する (別リポの PR を cwd 外から扱う経路は無い)。それでも
+`gh pr <subcommand> "$N"` を `--repo` 無しで呼ぶと、gh は cwd の remote 設定
+(upstream / 複数 remote / fork 元) から PR を独自に解決するため、Step 0.2 の
+`$OWNER_REPO` と食い違って別リポの PR に投稿する事故が起きうる。全 MODE の
+`gh pr` 系コマンドは Step 0.2 で確定した `--repo "$OWNER_REPO"` を明示する規約
+(fix モードの Step 0.3 / 6.5 も同じ)。
 
 `--comment` は中立コメント (Approve / Request changes ではない)。投稿成功
 (`POSTED_TO_GITHUB=True`) なら Step 8 で markdown を削除、失敗
