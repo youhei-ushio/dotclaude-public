@@ -307,7 +307,7 @@ if ERRORS is not empty:
 5. **ADR 作成**（仕様判断を伴う場合のみ）:
    - 仕様変更を伴わない純粋なバグ修正・リファクタリングでは不要
    - **配置先・ファイル名規約は `/documentation-standards` 参照**
-   - ADR 本文にタグ（`#出荷` `#受注` `#在庫` 等）を付け、関連 ADR だけを引けるようにする
+   - ADR 本文にタグ（`#auth` `#billing` `#import` 等、業務領域名）を付け、関連 ADR だけを引けるようにする
    - ADRテンプレート:
      ```markdown
      # <Issue番号>. タイトル
@@ -461,7 +461,7 @@ if ERRORS is not empty:
      （最大 3 回。超過時は PO にエスカレーション）
 
 7. 設計資料にフロー図や構成図を含める場合は drawio 形式で作成:
-   - **SVG への変換は `hooks/run-drawio-export.sh` を使う**。`Bash` で `drawio --export` / `Xvfb` を直接呼ばない
+   - **SVG への変換は `~/.claude/hooks/run-drawio-export.sh` を使う**。`Bash` で `drawio --export` / `Xvfb` を直接呼ばない
    - drawio / SVG の配置先は `/documentation-standards` 参照
 
 ### Step 4: ブラウザテスト
@@ -688,7 +688,7 @@ context を維持したまま次ステップに進む。
 - **【ADR必須】** 仕様の追加・変更を伴う Issue では、必ず ADR を作成すること
   - ADR は実装コミットと同一 PR に含める
   - 仕様変更を伴わない純粋なバグ修正・リファクタリングでは ADR 不要
-  - ADR 本文にはタグ（`#出荷` `#受注` `#在庫` 等）を付け、検索性を確保する
+  - ADR 本文にはタグ（`#auth` `#billing` `#import` 等、業務領域名）を付け、検索性を確保する
   - 配置先・ファイル名規約は `/documentation-standards` 参照
 - **【ドキュメントリンク必須】** 成果物にドキュメント（ADR 等の Markdown ファイル）が含まれる場合、PR の body に必ず「成果物リンク」セクションを設け、GitHub 上で閲覧可能なリンクを記載すること
   - リンク形式: `https://github.com/<owner>/<repo>/blob/<branch>/<path>`

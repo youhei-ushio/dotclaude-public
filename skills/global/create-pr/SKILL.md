@@ -246,7 +246,7 @@ git diff --name-only "origin/$BASE"...HEAD | grep -E '\.(blade\.php|vue|tsx|jsx)
    - 起動コマンドが特定できない / 3 回試行しても URL に到達できない場合は、**Step 4 全体を skip し、その旨を Step 8 の最終報告で明示**。skill 全体は escalate せず通常フローを継続
 2. **URL 推測 → 検証**: test plan 項目 + 変更画面 (route から逆引き) で `mcp__playwright__browser_navigate`
 3. **操作・検証**: 必要に応じて `mcp__playwright__browser_click` / `browser_type` / `browser_snapshot`
-4. **テストデータ作成は確認不要で自律実行**: 検証に必要なら artisan tinker / factory / 直接 DB 投入で作成して良い。ユーザーに「作ってよいか」を確認する必要はない — 実装内容を網羅的にテストするために必要なデータは自分で判断して作る。**ただし本番系 / 破壊的操作 (truncate / drop / migrate:fresh 等) は禁止**。ローカル DB はテスト用なのでデータ更新は自由。他 parallel への影響も許容
+4. **テストデータ作成は確認不要で自律実行**: 検証に必要なら artisan tinker / factory / 直接 DB 投入で作成して良い。ユーザーに「作ってよいか」を確認する必要はない — 実装内容を網羅的にテストするために必要なデータは自分で判断して作る。**ただし本番系 / 破壊的操作 (truncate / drop / migrate:fresh 等) は禁止**。ローカル DB はテスト用なのでデータ更新は自由
 5. **全操作パスを実行する**: 実装した機能の**全ての操作パス**をブラウザで実行する。
    「テストデータが無い」「DB を変更してしまう」は理由にならない（項番 4 で作る）。
    特に以下を飛ばさない:

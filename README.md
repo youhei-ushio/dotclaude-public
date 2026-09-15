@@ -156,7 +156,7 @@ dangling 検知・`--prune` は「このリポ (`$REPO_DIR`) 由来の symlink�
 | `pre-implementation-research` | 実装着手前の DB スキーマ実取得 + 仕様書確認 + serena 優先での既存実装把握 |
 | `documentation-standards` | docs/ 配下のディレクトリ構造・命名規則・顧客向け/開発者向けの書き分けと PDF 生成手順 |
 | `create-manual` | feature PR とセットで現場向け操作マニュアルを作成。物理名 → 業務語の置換ルール / レビュー観点チェックリスト / スクショ撮影手順 / マニュアル雛形を内包 |
-| `resolve-issue` | Issue 番号指定で Issue 対応を一括実行。Issue の種別 (bug / feature / ops) でパスを分岐し、bug は軽量パス、feature は設計書ゲート → 実装 → テスト → `ui-approval` → PR、ops は自動化パスで進める。不明点は `questionnaire` で質問票化。レビュー深度 (`--depth`) を種別から決めて `create-pr` に伝達（手順自体はフレームワーク非依存。テスト/PR 等の具体例として Laravel + Sail 等を併記） |
+| `resolve-issue` | Issue 番号指定で Issue 対応を一括実行。Issue の種別 (bug / feature / ops) でパスを分岐し、bug は軽量パス、feature は要件確認 → Plan → Plan の敵対的検証 → 実装 → テスト → `ui-approval` → PR、ops は自動化パスで進める。不明点は `questionnaire` で質問票化。レビュー深度 (`--depth`) を種別から決めて `create-pr` に伝達（手順自体はフレームワーク非依存。テスト/PR 等の具体例として Laravel + Sail 等を併記） |
 | `ui-approval` | ブラウザテストのスクリーンショットを LAN 越しの Web UI で 1 枚ずつ表示し、承認 / 指摘を収集する（`questionnaire` の画像レビュー版）。`resolve-issue` の feature パスから呼ばれる |
 | `parallel-setup` | 並走 clone（worktree でない独立 clone を 4〜7 本）を立てる pattern と手順。役割（feature/hotfix/PoC/refactor 等）別の分担、COMPOSE_PROJECT_NAME / ポート / .mcp.json の isolation、通知（tmux ペインボーダー / 通知音）の wiring、共有 DB の扱い、運用 Tips |
 | `review-permissions` | 蓄積された許可要求ログ（`permission-request-logger.py` が記録）をクラスタ単位で対話レビューし、allowlist 追加 / skill 化 / hook 化 / スクリプト化 / 都度確認継続 を判断 |
