@@ -27,7 +27,7 @@
 
 - **`git`** — clone / pull に使用
 - **`python3`**（3.9 以降） — 全 hook スクリプトの実行ランタイム
-- **`gh`** CLI — `create-issue` / `edit-issue` / `create-pr` / `issue` skill が `gh` を呼ぶ
+- **`gh`** CLI — `create-issue` / `edit-issue` / `create-pr` / `resolve-issue` / `review-pr` skill が `gh` を呼ぶ
 - **`jq`** — `statusline.sh` が Claude Code からの JSON 入力をパースするのに使用
 
 ### Optional（特定の skill / hook 使用時のみ）
@@ -147,7 +147,7 @@ dangling 検知・`--prune` は「このリポ (`$REPO_DIR`) 由来の symlink�
 |---|---|
 | `create-issue` | GitHub Issue 作成（一時ファイル経由で本文中 `#` 行のエスケープ問題を回避） |
 | `edit-issue` | 既存 Issue 本文の編集（`--body-file` で許可確認を回避） |
-| `create-pr` | 現在のブランチから PR 作成 |
+| `create-pr` | 現在のブランチから PR 作成。base 同期 → ブラウザテスト → PR 本文初期化 → `review-pr` へセルフレビューを委譲 (`--depth` で巡数・観点を伝達) → awaiting 化 |
 | `pdf` | Markdown → PDF 生成（SVG を base64 インライン化、相対パス画像、日本語マニュアル向け CSS テンプレ対応） |
 | `pdf-read` | PDF を全ページ PNG にレンダリング + テキスト抽出。PowerPoint 由来 PDF の図表内文字（SmartArt / 表セル内）を視覚確認するため（pypdfium2 / Apache 2.0 + Pillow + pdfplumber） |
 | `commit-workflow` | コミット指示の判定と `[カテゴリ] 概要` 形式のメッセージ規約、デバッグログ削除確認 |
@@ -156,11 +156,12 @@ dangling 検知・`--prune` は「このリポ (`$REPO_DIR`) 由来の symlink�
 | `pre-implementation-research` | 実装着手前の DB スキーマ実取得 + 仕様書確認 + serena 優先での既存実装把握 |
 | `documentation-standards` | docs/ 配下のディレクトリ構造・命名規則・顧客向け/開発者向けの書き分けと PDF 生成手順 |
 | `create-manual` | feature PR とセットで現場向け操作マニュアルを作成。物理名 → 業務語の置換ルール / レビュー観点チェックリスト / スクショ撮影手順 / マニュアル雛形を内包 |
-| `issue` | Issue 番号指定で「main 取得 → 設計書ゲート → 実装 → テスト → PR → レビュー → マニュアル → ブラウザテスト」を一括実行（手順自体はフレームワーク非依存。テスト/PR 等の具体例として Laravel + Sail 等を併記） |
+| `resolve-issue` | Issue 番号指定で Issue 対応を一括実行。Issue の種別 (bug / feature / ops) でパスを分岐し、bug は軽量パス、feature は設計書ゲート → 実装 → テスト → `ui-approval` → PR、ops は自動化パスで進める。不明点は `questionnaire` で質問票化。レビュー深度 (`--depth`) を種別から決めて `create-pr` に伝達（手順自体はフレームワーク非依存。テスト/PR 等の具体例として Laravel + Sail 等を併記） |
+| `ui-approval` | ブラウザテストのスクリーンショットを LAN 越しの Web UI で 1 枚ずつ表示し、承認 / 指摘を収集する（`questionnaire` の画像レビュー版）。`resolve-issue` の feature パスから呼ばれる |
 | `parallel-setup` | 並走 clone（worktree でない独立 clone を 4〜7 本）を立てる pattern と手順。役割（feature/hotfix/PoC/refactor 等）別の分担、COMPOSE_PROJECT_NAME / ポート / .mcp.json の isolation、通知（tmux ペインボーダー / 通知音）の wiring、共有 DB の扱い、運用 Tips |
 | `review-permissions` | 蓄積された許可要求ログ（`permission-request-logger.py` が記録）をクラスタ単位で対話レビューし、allowlist 追加 / skill 化 / hook 化 / スクリプト化 / 都度確認継続 を判断 |
 | `add-hook` | 新しい hook を本リポに追加し `settings.json` への配線・検証・テストまでを型化。「settings 参照 hook がファイル欠落で全 tool を block する」致命事故を防ぐ |
-| `review-pr` | 指定 PR をセルフレビュー。Reviewer A/B + Fact-checker の 3 エージェント並列構成（worktree 分離）。自分が author の PR は最大 5 巡で auto-fix モード、collaborator の PR は自動的に review-only モードで GitHub に summary review コメントを投稿（`--review-only` / `--fix` で明示 override 可）|
+| `review-pr` | 指定 PR をセルフレビュー。ポジションロール方式（Correctness / Security / Impact + Analyst 裁定者）の並列構成（worktree 分離）。`--depth lightweight` (1 巡) / `--depth full` (最大 3 巡) / フラグなし (従来の Reviewer A/B + Fact-checker、最大 5 巡)。自分が author の PR は auto-fix モード（新規 defect 0 件で早期収束、3 巡目以降はマージブロッカー級に観点を絞る）、collaborator の PR は自動的に review-only モードで GitHub に summary review コメントを投稿（`--review-only` / `--fix` で明示 override 可）。レビュアープロンプト等は `references/` に分割 |
 | `handoff` | 作業状態を `~/.claude/handoff/` の Markdown に保存し、後で読み込んで続きから再開（`save` / `load` / `list`）。セッション跨ぎの引き継ぎやタスク切り替えに使う。`save` デフォルトタスク名は `/rename` 由来のセッション名（`~/.claude/sessions/`）を参照し、未設定でも会話文脈から推測して動作する |
 | `systematic-debugging` | バグ原因究明の系統的規律。根本原因を掴む前に修正しない大原則 + 4 フェーズ（計測でデータフロー遡及 → working/broken 差分 → 単一仮説 1 変数検証 → 失敗テスト先行で 1 点修正）。「3 回失敗したらアーキを疑う」等。serena / 既存の検証手段と接続。スタック固有のデータ調査 skill があればフェーズ 1 の具体手段として併用 |
 | `tdd` | test-first（RED→GREEN→REFACTOR）の既定手順。失敗（RED）を必ず観測してから最小実装。superpowers の「テスト前コード全削除」絶対ルールは不採用（「シンプル第一」と衝突しうるため）。後追いで固める場合も RED を一度は観測する |
