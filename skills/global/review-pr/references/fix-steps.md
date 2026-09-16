@@ -99,6 +99,14 @@ kind 名前空間付き (`"defect:" + key` / `"judgment:" + key`) で
 - escalate 直行経路で commit 無しの場合: `### N 巡目 (escalate 中断
   / 理由: $ESCALATE_REASON)`
 - Test plan のチェック状態も最新化 (完了項目は `[x]`)
+- **例外: `- [ ] ブラウザテスト: skip (...)` / `- [ ] ブラウザテスト再走査: ...` の行は
+  原文のまま保持する**。前者は「ブラウザテストを実施していない」記録なので、「未完了
+  だから最新化」で `[x]` に反転させると dev server が起動できなかった PR で再走査を
+  試みる。後者は回帰の記録なので、`[x]` に反転させると回帰が隠れる
+  - **解除条項**: 後続巡の Step 5 で再走査が全 PASS したときのみ、
+    `- [ ] ブラウザテスト再走査: 回帰検出 (...)` を
+    `- [x] ブラウザテスト再走査: 回帰解消 ({内容})` に **置換してよい**
+    (これが無いと、修正後もグリーンな PR が「回帰未解消」と読める)
 
 ### 「対応履歴」セクションテンプレート
 
@@ -168,7 +176,15 @@ if BROWSER_TEST_DONE  # Step 0.4 で判定: PR 本文に「ブラウザテスト
                       # セクションがあれば True (経路 A/B 共通)
     AND (a または b または c または d):
     全ケースを再走査
-    失敗したら ESCALATE_REASON = "browser-regression" を立てて Step 7 へ進む
+    失敗したら:
+        # `## ブラウザテスト` セクション (判定キー) は消さず、Test plan に
+        # `- [ ] ブラウザテスト再走査: 回帰検出 ({内容})` を追記する
+        # (初回の記録だけが残ると「ブラウザテスト OK」と読める虚偽表示になる)
+        docs/temp/pr-body.md に上記 1 行を追記し、経路 B では GitHub に反映する:
+            gh pr edit "$N" --repo "$OWNER_REPO" --body-file "$REPO_ROOT/docs/temp/pr-body.md"
+        (Step 4.5 の投稿は追記前なので、ここで再投稿しないと本文に載らない。
+         経路 A では create-pr Step 7 が push 後にまとめて反映する)
+        ESCALATE_REASON = "browser-regression" を立てて Step 7 へ進む
 ```
 
 以下は完全 skip (= 正常な終了パス、escalate しない):
