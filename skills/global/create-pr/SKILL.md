@@ -1,12 +1,12 @@
 ---
 name: create-pr
-description: 現在のブランチから PR を作成し、base 同期・ブラウザテスト・別エージェントによるセルフレビューを「指摘が無くなるまで (最大 5 巡)」自己完結で実行する。「PR作成して」「PRを作って」のような自然言語で起動。一時ファイル経由で PR 本文の # 行問題を回避。
+description: 現在のブランチから PR を作成し、base 同期・ブラウザテスト・PR 本文初期化を行ったあと `review-pr` skill にセルフレビュー (--depth で Correctness/Security/Impact + Analyst、フラグなしで Reviewer A/B + Fact-checker) を委譲し、最後に awaiting 化する。「PR作成して」「PRを作って」のような自然言語で起動。一時ファイル経由で PR 本文の # 行問題を回避。
 allowed-tools: Read, Edit, Write, Grep, Glob, Bash, Agent, mcp__playwright__browser_navigate, mcp__playwright__browser_click, mcp__playwright__browser_type, mcp__playwright__browser_evaluate, mcp__playwright__browser_resize, mcp__playwright__browser_take_screenshot, mcp__playwright__browser_snapshot, mcp__playwright__browser_tab_select, mcp__playwright__browser_console_messages
 ---
 
 # プルリクエスト作成
 
-「PR 作って」と言われたら、その PR を **「独立セルフレビューで指摘が無くなった (= auto-fix が 0 件) 状態」** にして戻す。最大 5 巡まで自動で回す。
+「PR 作って」と言われたら、その PR を **「独立セルフレビューで指摘が無くなった (= auto-fix が 0 件) 状態」** にして戻す。巡数上限 (ITER_MAX) は `--depth` で決まる (lightweight 1 / full 3 / 指定なし 5) の範囲で自動で回す。
 
 途中で人間の判断が必要なのは:
 
@@ -15,43 +15,67 @@ allowed-tools: Read, Edit, Write, Grep, Glob, Bash, Agent, mcp__playwright__brow
 - ブラウザテストが 3 回連続で失敗したとき
 - ブラウザテストで回帰が出たとき
 
-それ以外は全自動で進める。**「指摘 0 件で自然終了」が基本ゴール、5 巡到達は警戒シグナル** (修正が新たな問題を呼んでいる / レビュアーが新しい観点を毎巡見つけて収束しない可能性)。
+それ以外は全自動で進める。**「指摘 0 件で自然終了」が基本ゴール、ITER_MAX 到達は警戒シグナル** (修正が新たな問題を呼んでいる / レビュアーが新しい観点を毎巡見つけて収束しない可能性。lightweight は 1 巡固定なので該当しない)。
 
 ## 短縮禁止
 
-**「小さい修正だから」「diff が少ないから」という理由で、Step 6 のレビュー構成 (Reviewer A / B 2 名並列 + Fact-checker 1 名) や巡数上限 (5 巡) を独断で短縮することは禁止する**。
+Step 5 で委譲する `review-pr` skill のレビュー構成 (`--depth` 指定時: Correctness / Security / Impact + Analyst、フラグなし: Reviewer A / B 2 名並列 + Fact-checker 1 名) と巡数上限を、create-pr 呼び出し側から独断で短縮してはならない (例: 「小さい修正だから 1 名で」「diff が少ないから 1 巡で」等)。
 
-### 適用範囲
+短縮禁止の **正本・理由・実例・具体的に禁止される行動** は `skills/global/review-pr/SKILL.md` の「短縮禁止」セクション参照。create-pr 側は委譲時に短縮指示を渡さず、review-pr の判定に任せる。
 
-本ルールが禁止対象とするのは **Step 6 のレビュー構成と巡数上限の独断短縮のみ**。skill 内に明記された条件付き skip パス (Step 3 のブラウザテスト起動失敗時 skip、Step 6.4 の escalate 検出時中断等) は本ルールの対象外であり、明記された条件で正規に skip / 中断する。
-
-「短縮」とは構成や上限の **下振れ方向** (削減方向) を指す。上振れ (レビュアーを 3 名以上に増やす等) は本ルールの対象外だが、想定外の挙動を生むので推奨もしない。
-
-### 理由
-
-- 修正のコード量と影響範囲は比例しない。1 行の変更でも race condition / セキュリティ脆弱性を生むことはある (実例: わずか 1 行の変更で 2 巡目に `os.replace` の inode race を独立レビュアーが発見したケース、1 行の修正に 1 巡目で shell injection が見つかったケースがある)
-- 「簡素な修正は本当に簡素なら自然に 1-2 巡で収束する」のがこの skill の終了条件 (auto-fix 0 件で break) の意図。短縮判断を呼び出し側に持ち込むと、その判定基準自体がブレて一貫性が損なわれる (撤回後 2 巡で自然終了した実証例がある)
-- 過剰な巡数を恐れて短縮するくらいなら、終了条件を信じて回す方が安全
-
-### 具体的に禁止される行動
-
-- Reviewer A / B 2 名並列起動を 1 名に減らす (常に 2 名 + Fact-checker 1 名 = 3 エージェント並列で起動)
-- Fact-checker subagent を「面倒だから」省略する (Step 6.2.3 の parent pre-classification は **前段処理として常に実施した上で**、Step 6.2.4 の Fact-checker subagent も **残指摘について必ず起動** する。parent 処理は subagent の代替ではない)
-- 「1 巡で終わらせる前提」で 2 巡目以降のレビュー実施判断をスキップする (auto-fix 0 件で自然 break するまで毎巡レビューを起動する)
-- 「これは些細だから」と escalate 候補を勝手に auto-fix 扱いに格下げ
-- 逆方向 (短縮の対称) として **「auto-fix 可能な指摘を不必要に escalate に格上げして 2 巡目以降を打ち切る」のも禁止**。Step 6.3 の分類基準に厳密に従う
-
-例外: **無し**。skill の流れ通りに必ず実施する。
+例外: `--depth` フラグによる ITER_MAX・観点の変更は「独断での短縮」に該当しない。これは workflow 設計レベルの決定（Issue の種別に基づくパス分岐）であり、実行時の ad-hoc 判断ではないため。`--depth` フラグは resolve-issue skill が Issue の種別から決定し、create-pr 経由で review-pr に転送する。
 
 ---
 
 ## 手順
 
+### Step 0: 引数の解析 (`--depth` の受け取り)
+
+本 skill の **`args` パラメータ (Skill ツール)** を解析する。受け取るのは
+`--depth lightweight` / `--depth full` のみで、resolve-issue skill が Issue の
+種別から決めて渡す (`/create-pr --depth lightweight` 等)。create-pr 単独起動では
+指定なし = legacy (全観点、最大 5 巡):
+
+```text
+DEPTH_FLAG=""            # Step 5 で /review-pr にそのまま転送する文字列
+EXPECT_DEPTH_VALUE=False
+for tok in $args:        # 擬似コード: $args を空白区切りでトークン化したものを順に処理
+    if EXPECT_DEPTH_VALUE:
+        if tok not in ("lightweight", "full"):
+            echo "[create-pr] --depth の値が不正です: ${tok} (lightweight | full)"
+            中断 (skill return)
+        DEPTH_FLAG = "--depth " + tok
+        EXPECT_DEPTH_VALUE = False
+    elif tok == "--depth":
+        if DEPTH_FLAG != "":
+            echo "[create-pr] --depth が重複しています"
+            中断 (skill return)
+        EXPECT_DEPTH_VALUE = True
+    elif tok starts with "-":
+        echo "[create-pr] 未知のフラグです: ${tok}"
+        中断 (skill return)
+    else:
+        pass   # フラグ以外のトークン (自然言語の補足) は無視する
+if EXPECT_DEPTH_VALUE:
+    echo "[create-pr] --depth に値がありません (lightweight | full)"
+    中断 (skill return)
+```
+
+**depth 独自付与の禁止**: create-pr が PR の内容・規模・難易度・変更ファイル種別を
+判断して独自に `--depth` を決めることは**禁止**する (短縮禁止セクション参照)。
+`DEPTH_FLAG` は `args` から受け取った値だけを持つ。
+
 ### Step 1: 状態確認
 
-最初に base ブランチ名を変数化 (以降の全 Step で `$BASE` を使う):
+最初にリポジトリルートと base ブランチ名を変数化 (以降の全 Step で `$REPO_ROOT` / `$BASE` を使う):
 
 ```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+if [ -z "$REPO_ROOT" ]; then
+    echo "[create-pr] リポジトリルートを解決できません。git 管理下で実行してください"
+    中断 (skill return)
+fi
+
 BASE=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's@^origin/@@')
 if [ -z "$BASE" ]; then
     # origin/HEAD が無い場合、main / master の順で remote 上の存在を確認
@@ -63,6 +87,10 @@ if [ -z "$BASE" ]; then
         BASE=main   # 最終フォールバック
     fi
 fi
+
+# 一時ファイル用ディレクトリを確保 (review-pr Step 0.2 でも作るが、
+# create-pr 単独起動時にも必要。冪等なので重複しても問題ない)
+mkdir -p "$REPO_ROOT/docs/temp"
 ```
 
 以下を並列で実行:
@@ -76,15 +104,14 @@ git diff "$BASE"...HEAD --stat
 
 ### Step 2: base 同期 + コンフリクト解消
 
-PR を立てた後にコンフリクトで CI が落ちるのを防ぐため、push 前に必ず確認する。
+push 前に base との乖離を解消する。**本 Step では push しない** (push は Step 7 で最終 1 回)。
 
 ```bash
 git fetch origin "$BASE"
 BEHIND=$(git rev-list --count HEAD.."origin/$BASE")
-REBASED_THIS_STEP=false
 if [ "$BEHIND" -gt 0 ]; then
     if git rebase "origin/$BASE"; then
-        REBASED_THIS_STEP=true   # 成功
+        :   # 成功
     else
         # コンフリクト検出。続きの分岐は下の「コンフリクト時の対処」へ。
         # スクリプトを盲目的に続行させない。
@@ -102,76 +129,30 @@ fi
   - ユーザーが **続行**: 解消後 `git rebase --continue`
   - ユーザーが **中止**: `git rebase --abort` で安全に元の HEAD に戻し、skill 全体を停止して報告
 
-rebase 後の push は Step 4 で `--force-with-lease` を使う。
-
-### Step 3: ブラウザテスト実施 (条件付き)
-
-#### 実施判定 (OR 条件)
-
-以下のいずれかに該当すれば **必ず実施** (判定の skip は禁止):
-
-1. **test plan / PR 本文素案にブラウザ系キーワード**: `ブラウザ` / `画面` / `UI` / `Playwright` / `画面遷移` / `ボタン` / `表示` (使用フレームワーク名があれば併せて加える)
-2. **diff に画面ファイル**: ビュー / フロントエンドコンポーネントの変更
-   - 例 (自プロジェクトの構成に読み替え): `*.vue`, `*.tsx`, `*.jsx`, `*.svelte`, `resources/views/**`, `resources/js/**`, `src/**` のコンポーネント、テンプレートエンジンのビューファイル等
-
-判定は以下で機械的に行う (パターンは自プロジェクトのビュー / コンポーネント拡張子・配置に読み替える):
-
-```bash
-# diff 解析 (例。プロジェクトのビュー/コンポーネントのパターンに調整する)
-git diff --name-only "$BASE"...HEAD | grep -E '\.(vue|tsx|jsx|svelte)$|^(resources/views|resources/js|src/.*components?)/'
-```
-
-#### 実行
-
-1. **dev server 起動確認**: プロジェクト固有の起動コマンドは CLAUDE.md / `.env` / `docker-compose.yml` / `package.json` 等を確認して判断。停止していたら起動する
-   - 起動コマンドが特定できない / 3 回試行しても URL に到達できない場合は、**Step 3 全体を skip し、その旨を Step 7 の最終報告で明示**。skill 全体は escalate せず通常フローを継続
-2. **URL 推測 → 検証**: test plan 項目 + 変更画面 (ルーティング定義から逆引き) で `mcp__playwright__browser_navigate`
-3. **操作・検証**: 必要に応じて `mcp__playwright__browser_click` / `browser_type` / `browser_snapshot`
-4. **テストデータ作成も OK**: 検証に必要ならプロジェクトの seeder / factory / 直接 DB 投入で作成して良い。**ただし本番系 / 破壊的操作 (truncate / drop / DB 全リセット等) は禁止**
-5. **失敗時のリトライ**:
-   - 1 件でも失敗したら **修正してリトライ**
-   - **同一ケースが** 3 回連続失敗したら **ユーザーに報告して停止** (別ケースの失敗とは合算しない)
-6. **証跡の保存**:
-   - 全成功したらスクリーンショットを `docs/images/` に保存
-   - PR 本文の「動作確認スクリーンショット」セクションに自動引用 (`?raw=true` 形式)
-
-### Step 4: リモートへプッシュ
-
-3 ケースを **排他的に** 分岐する (上から順に判定):
-
-```bash
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
-HAS_UPSTREAM=$(git rev-parse --abbrev-ref "$BRANCH@{u}" 2>/dev/null || echo "")
-
-if [ -z "$HAS_UPSTREAM" ]; then
-    # ケース A: 新規ブランチ (upstream 未設定)
-    # rebase 済みでも未済でも -u で初回 push が必要。force-with-lease は
-    # upstream が無い状態では意味を持たないので使わない。
-    gh auth setup-git && git push -u origin "$BRANCH"
-elif [ "$REBASED_THIS_STEP" = true ]; then
-    # ケース B: 既存ブランチ + Step 2 で rebase 済み
-    git push --force-with-lease
-else
-    # ケース C: 既存ブランチ + rebase 不要
-    git push
-fi
-```
-
-### Step 5: PR 本文の作成
+### Step 3: PR 本文の作成
 
 **重要: `gh pr create --body` にヒアドキュメントで直接渡さないこと。**
 
 PR 本文に `##` などの `#` で始まる行が含まれると、Claude Code のセキュリティチェックで許可確認が発生する。
 これを回避するため、**必ず一時ファイル経由で `--body-file` を使用する。**
 
-一時ファイルの配置先: `docs/temp/pr-body.md`
+一時ファイルの配置先: `$REPO_ROOT/docs/temp/pr-body.md`
+
+**この時点で `gh pr create` は実行しない。** PR 本文をローカルに作成し、レビュー完了後の
+Step 7 で `gh pr create --body-file` に渡す。
 
 ```bash
-# Write ツールで docs/temp/pr-body.md を作成
+# Write ツールで $REPO_ROOT/docs/temp/pr-body.md を作成 (Critical Decisions 込み)
 # ↓
-gh pr create --title "<タイトル>" --body-file docs/temp/pr-body.md
+# 所有権 sidecar を書き出す (中身はブランチ名)。
+# review-pr Step 0.3 が本 sidecar のブランチ名と比較して「経路 A 引き継ぎ」と
+# 判定する (= OWNED_BODY_FILE=False)。両 skill 共通フォーマット
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+echo "$BRANCH" > "$REPO_ROOT/docs/temp/.pr-body.owner"
 # ↓
-rm docs/temp/pr-body.md  # クリーンアップは Step 8
+# 注意: ここで pr-body.md / sidecar を rm しない。Step 5 で review-pr が
+# 本ファイルを引き継いで毎巡「対応履歴」を追記する。最終 rm は Step 9 で
+# 両ファイルを `rm -f` する
 ```
 
 #### PR 本文フォーマット
@@ -183,6 +164,9 @@ rm docs/temp/pr-body.md  # クリーンアップは Step 8
 ```markdown
 ## Summary
 - 変更内容の要約（1〜3行）
+
+## Critical Decisions
+（Step 3 で分析した結果を記載。省略不可）
 
 ## Test plan
 - [ ] テスト項目
@@ -196,25 +180,17 @@ rm docs/temp/pr-body.md  # クリーンアップは Step 8
 - 成果物にドキュメント（設計資料、仕様書、ADR 等）が含まれる場合は「成果物リンク」セクションを追加
   - リンク形式: `https://github.com/<owner>/<repo>/blob/<branch>/<path>`
   - drawio や SVG ファイルは Markdown に埋め込まれているためリンク不要
-- 印刷物がある場合は「印刷イメージ」セクションにスクリーンショットを掲載
-  - スクリーンショットは `docs/images/` 配下にコミットし、`https://github.com/<owner>/<repo>/blob/<branch>/<path>?raw=true` 形式の URL で参照（`?raw=true` はプライベートリポジトリでの画像直リンクに必須。public repo でも害はないので一律この形式で良い）
-- Step 3 でブラウザテストを実施した場合、「動作確認スクリーンショット」セクションに同形式でスクリーンショットを掲載
+- 「ブラウザテスト」セクションは **Step 4 実施後に自動追記される** (Step 3 時点では書かない。skip 時は追記されないのが正しい挙動)
 
 ```markdown
 ## Summary
 - 変更内容のサマリ
 
+## Critical Decisions
+（Step 3 で分析した結果を記載。省略不可）
+
 ## 成果物リンク
 （ドキュメント成果物がある場合のみ）
-
-## 印刷イメージ
-（印刷するものがある場合のみ）
-
-## 動作確認スクリーンショット
-（Step 3 でブラウザテスト実施した場合）
-
-## 対応履歴
-（Step 6 セルフレビュー実施後、毎巡 Step 6.4.5 で追加・更新する。実施前は省略）
 
 ## Test plan
 - テスト内容
@@ -224,327 +200,372 @@ Closes #<issue 番号>
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 ```
 
-##### 「対応履歴」セクションテンプレート
+##### Step 3 時点で書かないセクション
 
-Step 6.4.5 で巡ごとに追記する。実施しなかった巡は記載しない:
+- `## ブラウザテスト`: **Step 4 実施後に自動追記される** (Step 4 の 8 参照)。見出しは
+  `## ブラウザテスト` リテラルで固定 (review-pr Step 0.4 の `BROWSER_TEST_DONE` 判定キー)。
+  Step 3 時点でこの見出しを書くと、Step 4 を skip したときも True になるので書かない
+- `## 対応履歴`: Step 5 のセルフレビューで毎巡 review-pr Step 4.5 が追加・更新する。
+  テンプレートと挿入位置は `skills/global/review-pr/references/fix-steps.md` の Step 4.5 が正本
+  (本 skill では別途定義しない)
+
+#### Critical Decisions 分析
+
+PR 本文作成時に、変更がもたらす影響について **4 軸の明示的宣言** を行う。
+notApplicable でも省略不可 — 「考えたことを証明させる」仕組み。
+
+diff を分析し、以下の各軸について該当/非該当を判定する:
+
+| 軸 | チェック内容 | 判定ガイドライン |
+|----|-------------|-----------------|
+| backwardCompatibility | 後方互換性への影響。既存 API・DB カラム・画面操作の互換を壊さないか | public メソッドのシグネチャ変更、API レスポンス構造の変更、画面の操作フロー変更 |
+| securityTradeoff | セキュリティ上のトレードオフ。認証・権限・データ露出の変更 | Policy/Gate/Middleware の変更、認証ロジックの変更、データ公開範囲の変更 |
+| irreversibleAction | 不可逆な操作の有無。DB マイグレーション・データ削除・外部 API 呼び出し | マイグレーションファイル、`DELETE` / `TRUNCATE`、外部 API 呼び出しの追加・変更 |
+| dataModelChange | データモデル変更の有無。テーブル追加・カラム変更・リレーション変更 | マイグレーションファイルの存在、Model の `$fillable` / `$casts` / リレーション変更 |
+
+**分析手順**:
+
+1. `git diff "origin/$BASE"...HEAD` の diff を確認
+2. 各軸について該当/非該当を判定（複数軸に該当する場合あり。例: マイグレーション → dataModelChange: yes + irreversibleAction: yes）
+3. 該当する場合は具体的な影響と対策を記述
+4. PR 本文の `## Critical Decisions` セクションに以下の形式で記載:
 
 ```markdown
-## 対応履歴
+## Critical Decisions
 
-### 1 巡目 (commit <SHA>)
-- レビュアー: 2 名 / Fact-checker: 1 名
-- agreement 2/2: <件数> 件
-- agreement 1/2: <件数> 件
-- 分類: auto-fix <件数> / silent-reject <件数> / escalate <件数>
-- 主な auto-fix: <短い箇条書き 2-3 件>
-- silent-reject 内訳: <件数> 件 (主な理由: 事実誤認 N 件 / 主観 1 票 N 件)
-- escalate (あれば): <内容>
-
-### 2 巡目 (commit <SHA>)
-...
+| 軸 | 該当 | 影響・対策 |
+|----|------|-----------|
+| backwardCompatibility | notApplicable | — |
+| securityTradeoff | notApplicable | — |
+| irreversibleAction | yes | マイグレーションで orders テーブルに NOT NULL カラム追加。既存レコードにはデフォルト値 0 を設定 |
+| dataModelChange | yes | orders テーブルに priority カラム追加。Model の $fillable に追加済み |
 ```
 
-### Step 6: auto-review/fix ループ (指摘 0 件まで / 最大 5 巡)
+**review-pr 側での検証**: Analyst ロールが Critical Decisions の宣言と実際の diff を照合し、以下を検出する:
+- 宣言漏れ（マイグレーションファイルがあるのに dataModelChange: notApplicable）
+- 過小宣言（影響範囲が宣言より広い）
 
-PR 作成直後、セルフレビューに入る。**指摘 (auto-fix 対象) が 0 件になる
-ことが基本ゴール**。安全弁として最大 5 巡で打ち切る。
+### Step 4: ブラウザテスト実施 (条件付き)
 
-**重要原則**:
+#### 実施判定 (OR 条件)
 
-1. レビューは **必ず別エージェント (Agent ツール経由) で実行する**。
-   コードを書いた自分自身でレビューするとバイアスが残るため。
-2. レビューは **「2 レビュアー + 1 ファクトチェッカー」の 3 エージェント
-   構成** で実行する。役割分離により誤指摘 (subagent が公開ドキュメント
-   由来の誤った前提で指摘する等) を systematic に弾ける:
-   - **Reviewer A / B**: 並列で独立にレビュー。観点が重なっても OK
-     (2/2 一致は高信頼シグナル)
-   - **Fact-checker**: A+B の指摘リストを受け取り、各指摘の事実主張
-     (関数の存否 / 行番号 / ツール名 / 既出か否か等) を verify。
-     誤りと判定したものは silent-reject 候補としてマーク
-3. 3 エージェントとも親セッションの文脈を渡さず、PR 番号だけ渡して
-   diff から純粋に評価させる。
-4. レビュー agent (Reviewer A / B / Fact-checker) は **必ず
-   `isolation: "worktree"` で spawn し、かつプロンプトで作業ツリーの
-   変更を禁止する (二重防御)**。理由: Agent (subagent) は `isolation`
-   を指定しない限り親と cwd / git 作業ツリーを共有する。`~/.claude/*`
-   がリポ作業ツリーへの symlink で配布される dotfiles 環境では、
-   subagent が「実機テスト」のつもりで `git checkout` /
-   `gh pr checkout` すると **ライブ設定 (settings.json / hooks) ごと
-   別ブランチ版にリバートされてしまう** (共有作業ツリーでのブランチ
-   切替で稼働中の設定が壊れた事例が実際にある)。worktree
-   分離で親ツリーを物理的に守り、プロンプト制約で checkout 自体を抑止
-   する。レビューは `gh pr diff` / `gh pr view` のみで完結するため、
-   作業ツリーの書き換えは本来不要。
+以下のいずれかに該当すれば **必ず実施** (判定の skip は禁止):
 
-```
-iteration = 1
-while iteration <= 5:
-    # 6.1 base 再同期 (他 PR が間に入った場合に対応)
-    git fetch origin "$BASE"
-    BEHIND=$(git rev-list --count HEAD.."origin/$BASE")
-    if [ "$BEHIND" -gt 0 ]:
-        git rebase "origin/$BASE"   # コンフリクト時は Step 2 と同じ規則
-        # rebase 後はローカルと remote が分岐するので force-with-lease 必須。
-        # ただし HEAD と upstream が一致していれば push 不要 (二重 push 防止)。
-        if [ "$(git rev-list --count @{u}..HEAD)" -gt 0 ]:
-            git push --force-with-lease
-        REBASED_THIS_ITERATION = True
-    else:
-        REBASED_THIS_ITERATION = False
+1. **test plan / PR 本文素案にブラウザ系キーワード**: `ブラウザ` / `画面` / `UI` / `Playwright` / `Livewire` / `画面遷移` / `ボタン` / `表示`
+2. **diff に画面ファイル**:
+   - `*.blade.php`, `resources/views/**`, `resources/js/**`, `*.vue`, `*.tsx`, `*.jsx`
+   - Livewire: `app/Http/Livewire/**`, `app/Livewire/**`
 
-    # 6.2 レビュー実行: 2 レビュアー + 1 ファクトチェッカーの 3 段構成
+判定は以下で機械的に行う:
 
-    事前に owner/repo を取得:
-        OWNER_REPO=$(gh repo view --json owner,name -q '.owner.login + "/" + .name')
-
-    ## 6.2.1 Reviewer A と Reviewer B を並列起動
-    1 メッセージで Agent ツールを 2 つ並列に呼ぶ (single message, multiple tool calls)。
-    両者とも同じプロンプトを与えるが、独立な subagent なので結果は別個に出る:
-
-        Agent(
-            description = f"Independent reviewer A of PR #{N}",
-            subagent_type = "general-purpose",
-            isolation = "worktree",   # 親の作業ツリーを汚さない (重要原則 4)
-            prompt = REVIEWER_PROMPT  # 下記 (REVIEWER_PROMPT 参照)
-        )
-        Agent(
-            description = f"Independent reviewer B of PR #{N}",
-            subagent_type = "general-purpose",
-            isolation = "worktree",   # 親の作業ツリーを汚さない (重要原則 4)
-            prompt = REVIEWER_PROMPT
-        )
-
-    REVIEWER_PROMPT (f-string で補間してから渡す):
-        """
-        PR #{N} ({OWNER_REPO}) をコードレビューしてください。
-        事前知識・親セッションの議論は一切持っていないものとして、
-        純粋に diff と PR 本文だけから判断してください。
-
-        ## 重要な制約 (作業ツリーを変更しないこと)
-        レビューは read-only。評価は `gh pr view` / `gh pr diff`
-        (必要なら `gh api` での read-only なコード取得) のみで行うこと。
-        **`git checkout` / `git switch` / `git branch` 作成 /
-        `gh pr checkout` 等で作業ツリーや HEAD を変更してはならない**。
-        PR をローカル展開しての「実機テスト」も禁止 (このリポジトリは
-        設定ファイルが symlink 配布されており、ブランチ切替が稼働中の
-        ライブ環境を破壊する)。diff の評価だけで判断すること。
-
-        1. `gh pr view {N} --repo {OWNER_REPO} --json title,body,additions,deletions`
-        2. `gh pr diff {N} --repo {OWNER_REPO}`
-        3. 以下の観点で指摘事項を列挙:
-           - コード正当性 (バグ / ロジック誤り)
-           - セキュリティ (認証認可 / サニタイズ / 秘密漏洩 / 権限昇格)
-           - パフォーマンス (N+1 / 不要ループ / メモリ過剰)
-           - プロジェクト規約適合
-           - テスト網羅
-           - 命名 / 可読性 / 不要 import / typo
-        4. 各指摘に以下のマークを付ける:
-           主マーク (必ず 1 つだけ付与):
-             - [Must-fix]: ブロッカー (バグ / 機能不全 / 仕様判断ミス)
-             - [Should-fix]: 完成度向上
-             - [Nice-to-have]: 任意改善
-           付加マーク (主マークに併記可。0 個以上):
-             - [Security]: セキュリティ影響あり (重大度問わず付ける)
-             - [Tradeoff]: 性能 vs 可読性等の判断を要するもの
-           例: "[Should-fix][Security] パスワードがログ出力されている"
-               "[Must-fix] N+1 で 1000 件超のクエリが発生"
-        5. 報告は「ファイルパス:行番号 — マーク — 内容 — 推奨アクション」
-           の形で構造化して返す
-        6. 1 つの finding につき 1 行にまとめ、指摘番号 (R-1, R-2, ...) を
-           付けて返す。後段のファクトチェック / 集約処理がパースしやすい
-           ようにするため
-        """
-
-    ## 6.2.2 Reviewer A / B の結果をマージ
-    2 レポートを文字列で受け取り、以下を実施:
-      - 各 finding をパース → {id, file, line, marks, content, action}
-      - file + 近傍行 + 主題 が一致する finding 同士を 1 クラスタにまとめる
-      - 各クラスタに agreement = 2 (両者ヒット) または 1 (片方のみ) を付与
-      - クラスタごとに代表 finding (より具体的な記述の方) を採用
-    結果として、重複排除済みかつ agreement count 付きの finding リスト
-    `FINDINGS_RAW` を得る
-
-    ## 6.2.3 Pre-classification by parent (tool-existence claims)
-
-    Fact-checker (subagent) に投げる前に、**親しか確実に検証できない事実
-    主張** は親が直接処理する。これは重要な設計原則:
-
-    > Subagent は自分の toolset しか見えず、親の toolset は推測でしか
-    > 答えられない。tool-existence 系の主張 ("X ツールは存在しない /
-    > 正しい名称は Y" 等) を fact-checker に投げると、subagent が
-    > 自分の手元の deferred tool 一覧 (TaskCreate 等) を見て「Agent は
-    > 存在しない、Task が正しい」のように confidently false-verify する。
-
-    親による事前処理対象:
-    - 「ツール X が存在しない / 別名 Y が正しい」
-      → 親は自分の system prompt / 利用可能 tool list を直接観測できる
-      → 親が「実在する」と確認できれば即座に silent-reject 候補にマーク
-    - 「親が今回のセッションで実際に使ったツール / コマンドが間違い」
-      → 親が直近の tool 履歴 / コマンド成功事実から判断、誤指摘なら silent-reject
-
-    残りの事実主張 (diff 内の行番号 / ファイル存否 / PR 本文乖離等) を
-    fact-checker subagent に渡す。
-
-    ## 6.2.4 Fact-checker を 1 つ起動 (親 pre-classification 後の残りについて)
-    FINDINGS_RAW から「親が処理済み」のものを除いた指摘を渡して verify させる:
-
-        Agent(
-            description = f"Fact-check of PR #{N} review findings",
-            subagent_type = "general-purpose",
-            isolation = "worktree",   # 親の作業ツリーを汚さない (重要原則 4)
-            prompt = FACTCHECK_PROMPT
-        )
-
-    FACTCHECK_PROMPT (`{N}` 等は実値に置換して prompt 引数に渡す):
-        """
-        PR #{N} ({OWNER_REPO}) について、レビュアーから得られた
-        以下の指摘リストの **事実主張のみ** を検証してください。
-        設計判断 / 主観評価は対象外です。
-
-        ## 重要な制約 (作業ツリーを変更しないこと)
-        検証は `gh pr view` / `gh pr diff` / `gh api` での read-only な
-        取得と Read のみで行うこと。**`git checkout` / `git switch` /
-        `git branch` 作成 / `gh pr checkout` で作業ツリーや HEAD を
-        変更してはならない** (このリポジトリは設定ファイルが symlink
-        配布されており、ブランチ切替が稼働中のライブ環境を破壊する)。
-        PR をローカル展開しての検証も禁止。read-only 取得だけで判断する。
-
-        ## 検証する事実主張の例
-        - 「関数 / シンボル / ファイル X が無い」
-          → gh pr diff の該当箇所を再確認、または gh api でコード取得
-        - 「行番号 X の記述が無い / と異なる」
-          → diff の該当行を再確認
-        - 「PR 本文に X が書かれていない」
-          → gh pr view で再取得して確認
-        - 「既出 (前巡で対応済)」
-          → コミット履歴 / 現状コードを Read で確認
-
-        ## 検証対象外 (NG)
-        - 「ツール X は存在しない / Y が正しい名称」のような **subagent の
-          手元 toolset から推測する主張** は対象外。あなたの toolset は
-          親エージェントと異なるため、結論できません。「n/a」を返す。
-
-        ## 手順
-        1. `gh pr view {N} --repo {OWNER_REPO}` / `gh pr diff {N} --repo {OWNER_REPO}`
-           で最新情報を取得
-        2. 渡された各 finding について:
-           - 含まれる事実主張を抜き出す
-           - 上記方法で verify
-           - "verified" (事実合致) / "false-claim" (事実誤り) / "n/a"
-             (事実主張なし / 検証範囲外 / 主観判断のみ) のいずれかでマーク
-        3. false-claim の場合、根拠となる現状の事実を 1-2 行で添える
-
-        ## 返答フォーマット
-        指摘番号ごとに 1 行:
-          F-<id> — <verified|false-claim|n/a> — <根拠 or 補足>
-
-        ## 検証対象の指摘リスト
-        {FINDINGS_RAW}   # ← 6.2.2 で得たリストをテキスト化して埋め込む
-        """
-
-    ## 6.2.5 Fact-check 結果を FINDINGS_RAW にマージ
-    各 finding に factcheck フィールド (verified / false-claim / n/a /
-    parent-rejected) を付与。`FINDINGS` という最終リストを得る。これを
-    Step 6.3 に渡す。
-
-    重要: Skill ツールで /review を直接呼び出すと同一コンテキスト実行に
-    なりバイアスが残るため不可。必ず Agent ツール 3 個 (Reviewer A,
-    Reviewer B, Fact-checker) を使う。
-
-    # 6.3 指摘の分類 (FINDINGS = Reviewer A/B 集約 + Pre-class + Fact-check 結果付き)
-
-    各 finding を以下のいずれかに振り分ける:
-
-      ## (i) silent-reject (= 何もしない、Step 7 で件数のみ要約)
-        * factcheck == "false-claim"
-        * factcheck == "parent-rejected" (6.2.3 で親が tool 実在等を override)
-        * agreement == 1 かつ主マーク == [Must-fix] かつ factcheck != "verified"
-          (= 単独票の重大主張が事実確認できない = ハルシネーション疑い、保留)
-
-      ## (ii) escalate (= ユーザー確認が必要、真に判断分岐するもの)
-        * 修正でユーザーの過去の意図的な選択を覆すおそれ (例: revert)
-        * データ整合性 / マイグレーション影響あり
-        * アーキテクチャ判断 / 公開 API の breaking change
-        * 仕様判断 (要件解釈で複数の正解がありうる)
-        * 付加マーク [Tradeoff] 明示あり
-        * [Security] かつ修正方針が複数 (例: 「MD5 → bcrypt 移行戦略」)
-
-      ## (iii) auto-fix (= 自動修正対象、上記以外すべて)
-        * 主マーク不問。判断分岐しないなら [Must-fix] でも auto-fix。
-        * agreement == 2 (2 名一致) は信頼性高、優先的に auto-fix
-        * agreement == 1 でも factcheck == "verified" なら auto-fix
-        * **agreement == 1 かつ factcheck == "n/a" でも、主マークが
-          [Should-fix] または [Nice-to-have] で修正コストが小さいもの
-          (typo / 命名 / 不要 import / コメント補足 / 表記揺れ等) は
-          auto-fix する**。閾値を過度に厳しくすると有用な提案を取りこぼす
-        * 例: typo / 命名 / 不要 import / 検証追加 / コメント補足 /
-              ハードコード値の定数化 / 明らかなバグの単純修正 /
-              [Security] だが対応方針が一意 (例: 「ハードコード API
-              キーを env 変数に移す」)
-
-    silent-reject した指摘は subagent に問い合わせず、Step 7 で
-    「false-positive: 件数 + 主な内訳」として要約報告するだけにする。
-    1 巡ごとに些末な事実誤認でユーザー判断を仰ぐのは自動化の意味を損なう。
-
-    # 6.4 修正実行
-    if escalate が 1 件以上:
-        以降のループを中断して Step 7 に進む (escalate の内訳を報告)
-
-    if auto-fix が 0 件:
-        break  # レビュー OK、ループ終了
-
-    auto-fix を全件実装 (Edit / Write)
-    git add <変更ファイル>
-    # commit message はプロジェクトの規約に合わせる
-    # (日本語 OK のリポなら日本語、英語規約なら英語)
-    git commit -m "chore: <iteration> 巡目レビュー指摘反映"
-
-    # push 種別の分岐:
-    if REBASED_THIS_ITERATION:
-        git push --force-with-lease
-    else:
-        git push
-
-    # 6.4.5 PR 本文を最新状態に更新 (毎巡必須)
-    # 次巡のレビュアーが古い情報で評価しないようにするため、push と同時に
-    # PR 本文も Step 5 のフォーマットに沿って書き直す。
-    docs/temp/pr-body.md を最新内容で書き直す:
-      - 既存の Summary / 設計判断 / 維持されたノウハウは保持
-      - 「対応履歴」セクションを追加または更新し、今巡の auto-fix / escalate /
-        silent-reject の件数と主な内訳を 3-5 行で要約
-      - Test plan のチェック状態も最新化 (完了項目は [x])
-    gh pr edit {N} --body-file docs/temp/pr-body.md
-    rm docs/temp/pr-body.md
-
-    # 6.5 ブラウザテストの再走査 (UI 影響のある修正のときのみ)
-    # 判定対象は今巡 (= 直近 commit) で変更されたファイルのみ:
-    #   git diff HEAD~1 HEAD --name-only
-    # UI 影響あり判定 (いずれか満たせば再走査):
-    #   (a) パス判定: Step 3 の拡張子/ディレクトリパターンに該当
-    #   (b) スタイル系: *.css, *.scss, スタイル設定ファイルに変更あり
-    #   (c) ルーティング系: ルーティング定義ファイルに変更あり
-    #   (d) コンポーネントの class 属性 / utility class の追加削除を
-    #       diff 内で目視確認 (`class=` または ` class:` の変更行あり)
-    if Step 3 で実施していた AND (a または b または c または d):
-        全ケースを再走査
-        失敗したら escalate して Step 7 に進む
-    # 以下は完全 skip (= 正常な終了パス、escalate しない):
-    # - Step 3 を未実施だった PR (画面変更なし判定)
-    # - 今巡の auto-fix が typo / import 整理など UI に無関係なもののみ
-
-    iteration += 1
+```bash
+# diff 解析
+git diff --name-only "origin/$BASE"...HEAD | grep -E '\.(blade\.php|vue|tsx|jsx)$|^(resources/views|resources/js|app/(Http/)?Livewire)/'
 ```
 
-#### ループ終了条件
+#### 実行
 
-| 終了原因 | 振る舞い |
-|---|---|
-| auto-fix が 0 件のレビューが返った | ループを break、Step 7 へ (理想形) |
-| 5 巡完了 | ループを抜けて Step 7 へ (警戒シグナル: 指摘が収束していないので、報告で残課題と巡ごとの件数推移を強調) |
-| escalate を検出 | 即中断して Step 7 へ |
-| ブラウザテスト回帰失敗 | 即中断して Step 7 へ |
+1. **dev server 起動確認**: 多くは `./vendor/bin/sail` で稼働中。プロジェクト固有の起動コマンドは CLAUDE.md / `.env` / `docker-compose.yml` を確認して判断。停止していたら起動する
+   - 起動コマンドが特定できない / 3 回試行しても URL に到達できない場合は、**Step 4 全体を skip し、その旨を Step 8 の最終報告で明示**。skill 全体は escalate せず通常フローを継続
+2. **URL 推測 → 検証**: test plan 項目 + 変更画面 (route から逆引き) で `mcp__playwright__browser_navigate`
+3. **操作・検証**: 必要に応じて `mcp__playwright__browser_click` / `browser_type` / `browser_snapshot`
+4. **テストデータ作成は確認不要で自律実行**: 検証に必要なら artisan tinker / factory / 直接 DB 投入で作成して良い。ユーザーに「作ってよいか」を確認する必要はない — 実装内容を網羅的にテストするために必要なデータは自分で判断して作る。**ただし本番系 / 破壊的操作 (truncate / drop / migrate:fresh 等) は禁止**。ローカル DB はテスト用なのでデータ更新は自由
+5. **全操作パスを実行する**: 実装した機能の**全ての操作パス**をブラウザで実行する。
+   「テストデータが無い」「DB を変更してしまう」は理由にならない（項番 4 で作る）。
+   特に以下を飛ばさない:
+   - **主要フロー（CRUD の全操作）**: 作成・表示・更新・削除がある機能なら全て実行
+   - **状態遷移の全パス**: 予約→確認→完了、取消、エラー復帰など
+   - **バリデーション**: 必須項目の空送信、不正値、境界値
+   - **エッジケース**: 0 件時の表示、重複操作の防止
+   テスト完了報告時に「未実行のパスは無い」ことを確認する。
+   やむを得ず実行できないパスがある場合は理由と共に明示する（「やらなかった」ではなく「できない理由」を具体的に）
+6. **失敗時のリトライ**:
+   - 1 件でも失敗したら **修正してリトライ**
+   - **同一ケースが** 3 回連続失敗したら、`rm -f "$REPO_ROOT/docs/temp/pr-body.md" "$REPO_ROOT/docs/temp/.pr-body.owner" "$REPO_ROOT/docs/temp/review-"*.diff` で中間ファイルを掃除してから **ユーザーに報告して停止** (別ケースの失敗とは合算しない)
+7. **テスト網羅性の敵対的レビュー**: ブラウザテスト完了後、独立エージェントで
+   テストの網羅性を検証する。テスト実行者自身は「やった」バイアスがかかるため、
+   別の視点で「本当に全パスを通したか」を突く。
 
-### Step 7: 最終報告
+   親が diff ファイルを書き出す:
+
+   ```bash
+   git diff "origin/$BASE"...HEAD > "$REPO_ROOT/docs/temp/review-browser.diff"
+   ```
+
+   ```text
+   Agent(
+       description = "ブラウザテスト網羅性の敵対的レビュー",
+       subagent_type = "general-purpose",
+       isolation = "worktree",   # 親の作業ツリーを守る (review-pr 重要原則 4 と同じ二重防御)
+       prompt = """
+       対象ブランチのブラウザテスト結果を敵対的にレビューしてください。
+
+       1. `<REPO_ROOT を展開した絶対パス>/docs/temp/review-browser.diff` を Read して実装内容を把握
+          (親が `$REPO_ROOT` を展開してから prompt に埋め込む。subagent 側では変数が未定義)
+       2. 実装から導かれる「テストすべき全操作パス」を列挙
+       3. 以下を指摘:
+          - 実装にあるのにテストされていない操作パス
+          - 状態遷移で通っていないパス（特に異常系・取消・復元）
+          - エッジケース（0件、上限、重複操作、同時操作）
+          - テストデータ不足で本来のロジックを通っていない可能性
+
+       read-only。Edit / Write 禁止。git checkout / switch / gh pr checkout で作業ツリーを
+       変更しない。remote への書き込み (git push / gh pr edit|review|merge / gh api の非 GET) も禁止。
+       """
+   )
+   ```
+
+   **最大 5 巡ループする**:
+   1. 敵対的レビューで指摘を受ける
+   2. **指摘の妥当性を検証する** — 言われるがままに従わない。各指摘について:
+      - 実装コードを読んで指摘が事実に基づいているか確認
+      - テスト不要と判断できる正当な理由があれば反論する
+        （例: 「このパスは UI 上到達不能」「このバリデーションはサーバー側で担保済み」）
+      - 反論が通らない指摘のみテストを追加実行する
+      - **どうしても決着がつかない指摘はユーザーに判断を仰ぐ**
+   3. 再度敵対的レビューを起動（新しい独立エージェント）
+   4. 指摘 0 件（または全指摘に正当な反論済み）で収束、または 5 巡到達で終了
+
+   5 巡到達時に未解消の指摘が残っている場合は、Step 8 の最終報告で明示する。
+
+8. **ブラウザテスト結果を PR 本文に書き戻す**: ブラウザテストを実施した場合、
+   `docs/temp/pr-body.md` の `## Test plan` より前に `## ブラウザテスト` セクションを
+   追記する。**skip した場合は追記しない** (判定が False になるのが正しい挙動)。
+   見出しは `## ブラウザテスト` リテラルで固定 (review-pr Step 0.4 の
+   `BROWSER_TEST_DONE` 判定キーとして使われるため、文言を変えると Step 5
+   再走査がスキップされる)。実施した操作パスの一覧を簡潔に記載する。
+   スクリーンショットの添付は不要。
+
+### Step 5: セルフレビュー (`review-pr` skill に委譲)
+
+ブラウザテスト後（または判定により skip 後）、セルフレビューに入る。**レビュー本体は
+`review-pr` skill に委譲する**。本 step はその起動と結果受領を担当する。
+
+#### 委譲前の前提条件
+
+- Step 3 で `docs/temp/pr-body.md` と sidecar `docs/temp/.pr-body.owner`
+  (中身はブランチ名) を作成済みであること。`review-pr` Step 0.3 は sidecar の
+  ブランチ名とカレントブランチを照合して所有権フラグを `OWNED_BODY_FILE=False`
+  にセットする (= **create-pr が作ったファイルなので削除責務は create-pr 側
+  にあり**、review-pr は触らない)。review-pr は毎巡「対応履歴」セクションを
+  `docs/temp/pr-body.md` に追記する
+- **この時点で PR はまだ存在しない** (経路 A)。`review-pr` には PR 番号を渡さない
+
+#### 起動方法
+
+Skill ツール経由で呼び出す:
+
+```text
+/review-pr --fix {depth_flag}
+```
+
+経路 A では PR が未作成のため `gh pr view` による author 自動判定が効かず、
+`--fix` を明示しないと review-only にフォールバックする。
+
+`{depth_flag}` は Step 0 で `args` から受け取った `DEPTH_FLAG` をそのまま入れる
+(空なら `/review-pr --fix`)。指定がある場合:
+- `--depth lightweight` — バグ修正パス: Correctness + Security のみ、1 巡
+- `--depth full` — 機能追加パス: Correctness + Security + Impact、最大 3 巡
+
+create-pr 単独起動時（resolve-issue skill 経由でない場合）は `DEPTH_FLAG` なし = 現行動作（全観点、最大 5 巡）。
+
+**depth 独自付与の禁止**: create-pr が PR の内容・規模・難易度・変更ファイル種別を
+判断して独自に `--depth` を付与することは**禁止**する (Step 0 参照)。
+「skill ファイルだけの変更だから lightweight でよい」「diff が小さいから lightweight」
+等の ad-hoc 判断は短縮禁止ルールの適用対象。
+
+`review-pr` は内部で以下を全自動で実行する (詳細は
+`skills/global/review-pr/SKILL.md` 参照):
+
+- 毎巡先頭で base 再同期 (rebase)
+- 毎巡 `git diff "origin/$BASE"...HEAD` を diff ファイルに書き出し、レビュアーに渡す
+- `--depth` 指定時: Correctness / Security / Impact + Analyst の並列レビュー、
+  フラグなし: Reviewer A / B + Fact-checker の 3 エージェント並列レビュー (worktree
+  分離)
+- 指摘の分類 (silent-reject / escalate / auto-fix)
+- auto-fix の Edit/Write 実装 + commit
+- `docs/temp/pr-body.md`「対応履歴」セクション追記
+- UI 影響時はブラウザテスト再走査
+- 巡数上限は depth 依存 (lightweight 1 / full 3 / legacy 5)。`auto-fix = 0` または
+  fix-stable 収束で自然終了 / escalate / ブラウザ回帰で中断
+- 3 巡目以降は各ロールのプロンプトを「マージブロッカー級のみ」に
+  自動制約
+
+#### 委譲時の制約
+
+- **短縮指示を渡さない**: 「小さいから 1 名で」「1 巡で」等は禁止
+  (詳細は上の「短縮禁止」セクション)
+- **`docs/temp/pr-body.md` を委譲前に削除しない**: `review-pr` が
+  引き継いで使う。`review-pr` 内部では本ファイルを **削除しない**
+  ので、本 skill の Step 9 で rm する
+
+#### 委譲後の処理
+
+`review-pr` が return したら、その出力 (巡数 / 各巡の件数推移 /
+escalate 内容 / silent-reject 件数等) を保持して Step 5.5 (リモートブランチ判定) に進む。
+
+**escalate 時も PR は作る**: `review-pr` 内で escalate された場合も、
+Step 5.5 (リモートブランチ判定) → Step 6 (squash) → Step 7 (push + PR 作成) →
+Step 8 (最終報告) → Step 9 (クリーンアップ) → Step 10 (awaiting 化) の順に
+**全 Step を実施する**。
+escalate は「人間の判断が要る」であって「成果物を捨てる」ではない。
+PR があればユーザーはブラウザで diff を見て判断でき、判断後に続きを再開できる。
+Step 8 の最終報告で escalate 内容と「ユーザー判断待ちである」ことを明記する。
+Step 10 の `AskUserQuestion` で escalate 内容を提示する。
+
+**採らない案**: 「escalate 時は push せず cleanup も skip する」案は採らない。
+理由: escalate 時も PR を作ることでユーザーが diff を確認でき、判断後に
+続きを再開できる。
+
+Step 9 に到達しない中断経路は 5 つあり、`docs/temp/` の扱いは経路ごとに違う:
+
+| 中断経路 | `docs/temp/` の扱い | 理由 |
+|---|---|---|
+| Step 1: `REPO_ROOT` が解決できない | 何もしない | Step 3 より前で、`mkdir -p` にも到達しない |
+| Step 2: rebase コンフリクトでユーザーが中止 | 何もしない | Step 3 より前なので pr-body.md はまだ無い |
+| Step 4: ブラウザテスト 3 回連続失敗 | 中断箇所で `rm -f` | レビュー前なので対応履歴は無く、再実行は Step 3 の Write で作り直せる |
+| Step 5: 委譲先 `review-pr` が Step 0 で中断して戻る (Step 0.2 の `REPO_ROOT` 解決不能 / Step 0.2.5 の `gh api user` と author 取得の両方失敗。後者は create-pr が `--fix` を渡すので経路 A では到達しない) | **残す** | 委譲先が `中断 (skill return)` で戻った場合、create-pr も Step 5.5 以降に進まず**そこで中断する**。pr-body.md は Step 3 の作成物でレビュー前なので、残しても再実行時に Step 3 の Write が上書きする。消す処理を足す価値が無い |
+| Step 7 (経路 B): remote-tracking ref 不在で force push 不可 | **残す** | レビュー後で、pr-body.md に N 巡分の対応履歴がある。案内先の手動 PR 作成にこのファイルが要り、PR 未作成なので消すと復元できない |
+
+(`review-pr` 内の escalate / base-conflict / browser-regression は create-pr を
+中断せず Step 5.5 以降に進むので、ここには含めない。`review-pr` が中断で戻るのは
+上表 Step 5 の行の 2 経路だけで、いずれも Step 1 (レビュー本体) より前に起きる)
+
+#### Skill 委譲と subagent 独立性の整理
+
+`review-pr` を Skill ツールで呼び出すと、`review-pr` 本体は **親
+(create-pr) と同一コンテキストで走る**。これがバイアスにならないのは、
+セルフレビューにおける「コードを書いた本人による評価」を禁じている
+真の対象は **レビュー subagent** (`--depth` 指定時: Correctness / Security /
+Impact + Analyst、フラグなし: Reviewer A/B + Fact-checker) であり、
+orchestration 層 (= `review-pr` 本体) の独立性ではないため。`review-pr` の
+Step 2 で必ず Agent ツール経由 (`isolation: "worktree"`) で subagent を
+spawn することで、レビュー評価の独立性は構造的に担保される。
+
+### Step 5.5: リモートブランチ判定 (Step 6・7 共通)
+
+**Step 6・7 の前に必ず実行する。** Step 6 (squash) と Step 7 (push) の
+両方がこの判定結果を使う。独立 Step にすることで、Step 6 を飛ばしても
+判定は済んでいる構造にする。
+
+```bash
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+# リモートの実体で判定する (ローカルの tracking 設定に依存しない)。
+# git ls-remote はネットワークを使う。オフラインワーカー構成では
+# push 可否の判定は台帳側 (push を行う側) の責務になる。
+# **安全側に倒す**: ls-remote が失敗した場合は「公開済み」とみなす。
+# 理由: 誤って「未公開」→ 公開済み履歴を squash で破壊 (回復に手作業)。
+#        誤って「公開済み」→ squash されないだけ (壊れない)。
+if LS_REMOTE_OUT=$(git ls-remote --heads origin "$BRANCH" 2>/dev/null); then
+    REMOTE_BRANCH_EXISTS=$(printf '%s' "$LS_REMOTE_OUT" | grep -c . || true)
+else
+    echo "[create-pr] リモートを参照できません。公開済みとみなし squash をスキップします"
+    REMOTE_BRANCH_EXISTS=1
+fi
+```
+
+### Step 6: squash
+
+**squash は経路 A (まだ push されていないブランチ) のときだけ行う。**
+経路の判定は Step 5.5 が行うので、**Step 6 自体は必ず実行する**
+(Step 7 が Step 5.5 の判定結果を使うため)。
+
+```bash
+if [ "$REMOTE_BRANCH_EXISTS" -eq 0 ]; then
+    # リモートに無い → squash してよい
+
+    # squash 前に畳むコミットを記録
+    git log "origin/$BASE"..HEAD --oneline
+
+    git reset --soft "origin/$BASE"
+    # コミットメッセージを組み立てて commit
+    # - commit-workflow skill の規約に従う
+    # - Closes #<issue番号> トレーラーを含める (Issue 対応時)
+    # - 🤖 Generated with [Claude Code] トレーラーを含める
+    git commit -m "<タイトル>
+
+<本文>
+
+Closes #<issue番号>
+
+Co-Authored-By: ...
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+else
+    # 既に remote にある → squash しない (force-push を避けるため)
+    :
+fi
+```
+
+- `rebase -i` は使わない。`reset --soft` + `commit` の方が非対話で失敗モードが少ない
+- **トレーラーを明示的に組み立てること**: `Closes #<issue番号>` と
+  `🤖 Generated with [Claude Code]` は巡ごとのコミットには無いので、
+  squash 時のメッセージ生成で必ず含める
+- コミットメッセージは `commit-workflow` skill の規約に従う
+
+### Step 7: push + PR 作成
+
+3 つの小節に分かれる。**経路 B (force push) だけを独立した見出しにしてある**のは、
+「fix 経路に lease 付き force push が現れないこと」を固定する静的検査を置く場合に、
+「経路 B: force push」見出しの節だけを除外できるようにするため。経路 A の通常 push
+(7-1) と PR 作成 (7-2) は検査対象に残り、「経路 A は force を使わない」が検査で担保される。
+この小節の外に当該コマンド名を書くと検査が落ちる (意図どおり)。
+
+#### Step 7-1: push
+
+```bash
+# BRANCH / REMOTE_BRANCH_EXISTS は Step 5.5 で判定済み
+gh auth setup-git
+if [ "$REMOTE_BRANCH_EXISTS" -eq 0 ]; then
+    # 経路 A: リモートに無い (squash 済み) → 通常 push。force は使わない
+    git push -u origin "$BRANCH"
+else
+    # 経路 B: リモートに存在する既存ブランチ → 下の「経路 B: force push」を実行
+    :
+fi
+```
+
+#### 経路 B: force push (リモートに存在する既存ブランチ)
+
+**経路 B の force push は `--force-with-lease` のみ。`--force` は禁止。**
+fetch 前に SHA を捕まえてリースを固定する。fetch 後に expect 値なしで
+`--force-with-lease` を使うと、他人の新規コミットも黙って吹き飛ばす。
+
+```bash
+EXPECTED=$(git rev-parse "origin/$BRANCH" 2>/dev/null || echo "")
+git fetch origin "$BRANCH"
+LOCAL_AHEAD=$(git rev-list --count "origin/$BRANCH"..HEAD 2>/dev/null || echo 0)
+REMOTE_AHEAD=$(git rev-list --count "HEAD..origin/$BRANCH" 2>/dev/null || echo 0)
+if [ "$REMOTE_AHEAD" -gt 0 ] && [ "$LOCAL_AHEAD" -gt 0 ]; then
+    # 分岐している = rebase で書き換わった
+    if [ -n "$EXPECTED" ]; then
+        git push --force-with-lease="refs/heads/$BRANCH:$EXPECTED"
+    else
+        # ローカルに remote-tracking ref が無い → リースを張れない
+        echo "[create-pr] remote-tracking ref が無いため force push できません"
+        echo "手動で git push --force-with-lease を実行してください"
+        # docs/temp/ は消さない: 上の案内どおり手動で PR を作るのに pr-body.md
+        # (レビュー N 巡分の対応履歴を含む) が要る。PR 未作成なので消すと復元手段が無い
+        中断 (skill return)
+    fi
+else
+    git push
+fi
+```
+
+#### Step 7-2: PR 作成 or 更新
+
+```bash
+# push 済みだが PR が無いブランチ (中断の残骸、閉じた PR の後) に対応するため
+# upstream の有無ではなく PR の存在で分岐する
+EXISTING_PR=$(gh pr view --json number -q .number 2>/dev/null || echo "")
+if [ -z "$EXISTING_PR" ]; then
+    gh pr create --title "<タイトル>" --body-file "$REPO_ROOT/docs/temp/pr-body.md"
+else
+    gh pr edit "$EXISTING_PR" --body-file "$REPO_ROOT/docs/temp/pr-body.md"
+fi
+```
+
+### Step 8: 最終報告
 
 以下をまとめて報告:
 
@@ -555,16 +576,60 @@ while iteration <= 5:
 - escalate された指摘 (あれば内容と該当指摘箇所)
 - 残コミット履歴の概要
 
-### Step 8: クリーンアップ
+### Step 9: クリーンアップ
 
 ```bash
-rm docs/temp/pr-body.md
+rm -f "$REPO_ROOT/docs/temp/pr-body.md" "$REPO_ROOT/docs/temp/.pr-body.owner" "$REPO_ROOT/docs/temp/review-"*.diff
+# -f で冪等性確保 (review-pr 経路 B 起動時など別 skill が先に消すケースに
+# 耐える)。sidecar (.pr-body.owner) も同時に消すことで、次回 PR 作成時の
+# 所有権判定が確実に「経路 A の新規作成」として始まる。
+# review-*.diff はレビュー各巡で生成された diff ファイル。
 ```
 
 `docs/temp/` に他のファイルがある場合があるため、**ディレクトリごと削除しない**。
 
-PR 完成後は Step 7 の最終報告 (PR URL / 巡数 / ブラウザテスト結果 / escalate
-内容 / コミット履歴概要) をユーザーに返して終了する。
+### Step 10: 完了の宣言
+
+**全ての副作用処理 (Step 9 のクリーンアップ等) を完了させた後** に実行する。
+
+順序が重要: 本 Step を **最後** に置き、副作用処理を全て先に完了させる規約
+(`AskUserQuestion` はブロッキング呼び出しで、応答後の skill フロー保証が無いため
+Step 9 クリーンアップを skip するリスクがある)。
+
+`AskUserQuestion` を呼んで PR 完了報告を **明示的なユーザー判断待ち状態**
+として declare する。
+
+> **本 skill 自体は視覚的な通知機構を持たない**。応答待ちの可視化は環境側
+> (statusline / hook / 外部オーケストレータ) に委ね、それらが無い環境では
+> `AskUserQuestion` による停止そのものが合図になる。
+> 同じ注記が `create-issue` にもある。
+
+呼び出し例 (`AskUserQuestion` の正しい schema = `questions: [...]` リスト形式):
+
+```text
+AskUserQuestion({
+    questions: [
+        {
+            question: "PR が完成しました。マージ判断をお願いします。",
+            header: "PR完了",
+            multiSelect: false,
+            options: [
+                {label: "確認する", description: "PR 内容を確認する"},
+                {label: "すでにマージ済み", description: "別タブで既にマージした"}
+            ]
+        }
+    ]
+})
+```
+
+ユーザーが「Other」で自由入力すれば skill のフローから自然に抜けられる。
+どの選択肢を選んでも `UserPromptSubmit` が発火し、awaiting 表示は解除される
+(選択肢の違いは Claude 側の次アクションの参考情報であり、awaiting 解除自体は
+ユーザーが何か入力した時点で共通に起きる)。
+
+**実装メモ**: 本 Step は `create-pr` skill 固有の挙動。他 skill で「ユーザー
+判断待ち」を declare したい場合も同様に「全副作用完了後の最終ステップ」で
+宣言すること (PermissionRequest 経路を統一シグナルとして扱う)。
 
 ---
 
@@ -572,17 +637,17 @@ PR 完成後は Step 7 の最終報告 (PR URL / 巡数 / ブラウザテスト�
 
 skill が「ユーザー確認を取って停止する」のは以下のときのみ:
 
-1. **コンフリクトの意味的解消** (Step 2 / Step 6.1)
+1. **コンフリクトの意味的解消** (Step 2、および `review-pr` 内の base 再同期時)
    - 同じ関数や条件分岐を両側で別の意図に変更している
    - 何を残すかは仕様判断
-2. **レビュー指摘のブロッカー / トレードオフ判定** (Step 6.3)
-   - 上述の分類表参照
-3. **ブラウザテストの 3 回連続失敗** (Step 3 のリトライ条項)
+2. **レビュー指摘のブロッカー / トレードオフ判定** (`review-pr` 内の指摘分類)
+   - 詳細な分類基準は `skills/global/review-pr/SKILL.md` の Step 3 参照
+3. **ブラウザテストの 3 回連続失敗** (Step 4 のリトライ条項)
    - 修正で直らない深い問題の可能性
-4. **ブラウザテストの回帰** (Step 6.5)
+4. **ブラウザテストの回帰** (`review-pr` 内の再走査)
    - 修正で動いていた機能が壊れた
 
-それ以外 (lint 違反 / 命名 / 不要 import / typo / 軽微なリファクタ提案等) は **すべて自動修正する**。
+それ以外 (lint 違反 / 命名 / 不要 import / typo / 軽微なリファクタ提案等) は **すべて自動修正する** (`review-pr` 側で実施)。
 
 ---
 
@@ -590,8 +655,8 @@ skill が「ユーザー確認を取って停止する」のは以下のとき�
 
 以下のいずれかが true なら **必ず実施**:
 
-- PR 本文 (素案でも可) / test plan / 変更ファイル名・パス に画面系キーワード (`ブラウザ` / `画面` / `UI` / `Playwright` / `画面遷移` / `ボタン` / `表示`、使用フレームワーク名) が出現
-- diff にビュー / フロントエンドコンポーネントファイル (例: `.vue`, `.tsx`, `.jsx`, `.svelte`, `resources/views/**`, `resources/js/**`, `src/**` のコンポーネント。自プロジェクトの構成に読み替え) が含まれる
+- PR 本文 (素案でも可) / test plan / 変更ファイル名・パス に画面系キーワード (`ブラウザ` / `画面` / `UI` / `Playwright` / `Livewire` / `画面遷移` / `ボタン` / `表示`) が出現
+- diff にビュー / コンポーネントファイル (`.blade.php`, `.vue`, `.tsx`, `.jsx`, `resources/views/**`, `resources/js/**`, `app/(Http/)?Livewire/**`) が含まれる
 
 判定の skip 判断は不要。両条件が false でも実施したほうが安心な場合は実施して構わない。
 
@@ -600,8 +665,8 @@ skill が「ユーザー確認を取って停止する」のは以下のとき�
 ## 注意事項
 
 - push は必ず `gh` 経由 (SSH 鍵なし)。`gh auth setup-git` を先に走らせる
-- `docs/temp/` は `.gitignore` 対象外なので Step 8 で必ず掃除
+- `docs/temp/` は `.gitignore` 対象外なので Step 9 で必ず掃除
 - PR 本文を `--body` で直接渡す方法は使わない (`#` 行問題)
-- rebase 後の push は `--force-with-lease` (`--force` は禁止)
-- セルフレビューループ中の commit message は短くて良い (`chore: <N> 巡目レビュー指摘反映` 等)、プロジェクトの commit 規約 (日本語 / 英語) に合わせる。squash は後で人がやる
-- **指摘 0 件で自然終了 = 基本ゴール / 5 巡到達 = 警戒シグナル** (修正が新たな問題を呼んでいる、またはレビュアーが毎巡新しい観点を出し続けて収束しない可能性大)。Step 7 の報告では 5 巡到達ケースの「巡ごとの auto-fix 件数推移」と「残課題」を強調すること
+- セルフレビューループ中の commit message・PR 本文の毎巡更新方針は `review-pr` 側に集約 (本 skill では別途定義しない)
+- **指摘 0 件で自然終了 = 基本ゴール / ITER_MAX 到達 = 警戒シグナル または収束** (詳細解釈は `skills/global/review-pr/SKILL.md` 冒頭参照)。Step 8 の報告では ITER_MAX 到達ケースの「巡ごとの auto-fix 件数推移」と「収束 / 警戒の判定」を明記すること (`review-pr` から受領した出力をそのまま転載でよい)
+- **Critical Decisions は省略不可**: Step 3 の 4 軸分析は全 PR で必ず実施する。notApplicable でも明示的に宣言すること。省略は許容しない
