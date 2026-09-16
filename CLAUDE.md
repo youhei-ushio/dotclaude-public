@@ -60,6 +60,21 @@
 - `grep` / `find` / `cat` での無計画なコード探索は避ける（`hooks/serena-enforcer.py` がこれを誘導）
 - 既知のファイル名や行番号がわかっている場合の `view` / `Read` は OK
 
+## Bash の書き方（許可プロンプトを増やさない）
+
+**`cd <path> && <cmd>` を書かない。** 許可設定は先頭コマンドで照合されるため、`cd` を前置すると
+`git show` のように既に許可済みのコマンドでも毎回確認を求められる。代わりに次を使う。
+
+| 避ける | 使う |
+|---|---|
+| `cd repo && git status` | `git -C repo status` |
+| `cd app && npm test` | `npm --prefix app test` |
+| `cd dir && ls` | `ls dir`（絶対パス・相対パスをそのまま渡す） |
+| `cd dir && ./script.sh` | `bash dir/script.sh` |
+
+**Why:** 許可要求ログ 257 件のうち 38 件が `cd` 前置による再確認だった（2026-08-15 の権限整理）。
+どうしても作業ディレクトリを移す必要がある場合（`npm ci` など cwd 依存のもの）だけ `cd` を使う。
+
 ## skill の優先利用
 
 新規実装・改修・コミット・テスト・ドキュメント作成の各場面で、対応する skill が auto-load される設計。skill が読み込まれたら、その手順に従って進める。
