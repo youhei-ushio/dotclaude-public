@@ -537,7 +537,11 @@ if ERRORS is not empty:
 
 3. **ブラウザテスト実行**:
    - 追加したテストケースをブラウザで実行
-   - テスト結果（PASS/FAIL）を記録
+   - テスト結果（PASS/FAIL）を記録 (テストケースの「結果」欄)。スクリーンショットは
+     コミットしない (create-pr の PR 本文ルール参照)
+   - 全 PASS なら Step 5 の `/create-pr` が PR 本文の `## ブラウザテスト` セクションに
+     実施内容を記録する。Step 4 を skip した場合は Test plan に
+     `- [ ] ブラウザテスト: skip ({理由})` を残す
 
 4. **[feature + 画面変更あり] UI 承認**:
    - `/ui-approval` スキルでスクショを Web UI に表示し、PO の目視承認を得る

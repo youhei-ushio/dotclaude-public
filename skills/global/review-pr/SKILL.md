@@ -329,7 +329,10 @@ if [ -f "$REPO_ROOT/docs/temp/pr-body.md" ]:
     else:
         # sidecar 無し / 別ブランチのゴミファイル → 経路 B 扱いで上書き再生成
         if [ -n "$N" ]:
-            gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > "$REPO_ROOT/docs/temp/pr-body.md"
+            # `>` は実行前に truncate するので、成功を確認してから確定させる (下記参照)
+            gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > "$REPO_ROOT/docs/temp/pr-body.md.tmp" \
+                || 取得失敗として停止 (下記参照)
+            mv "$REPO_ROOT/docs/temp/pr-body.md.tmp" "$REPO_ROOT/docs/temp/pr-body.md"
         else:
             # PR 不在 (sidecar 不一致 + N 空の異常状態) → 空ファイル
             echo "" > "$REPO_ROOT/docs/temp/pr-body.md"
@@ -338,7 +341,9 @@ if [ -f "$REPO_ROOT/docs/temp/pr-body.md" ]:
 else:
     # ファイル無し → 経路 B
     if [ -n "$N" ]:
-        gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > "$REPO_ROOT/docs/temp/pr-body.md"
+        gh pr view "$N" --repo "$OWNER_REPO" --json body -q .body > "$REPO_ROOT/docs/temp/pr-body.md.tmp" \
+            || 取得失敗として停止 (下記参照)
+        mv "$REPO_ROOT/docs/temp/pr-body.md.tmp" "$REPO_ROOT/docs/temp/pr-body.md"
     else:
         # PR 不在 (経路 A で sidecar もない異常状態) → 空ファイル
         echo "" > "$REPO_ROOT/docs/temp/pr-body.md"
@@ -350,6 +355,16 @@ else:
 `echo "$BRANCH" > $REPO_ROOT/docs/temp/.pr-body.owner` を実行する規約とする。両 skill
 共通のフォーマットにすることで、所有権判定が確実になる。sidecar 方式
 なので PR 本文には一切影響しない (HTML コメントすら残らない)。
+
+**`gh pr view` の取得は必ず成否を確認する**: 失敗 (認証切れ / ネットワーク /
+API エラー) すると `>` のリダイレクトが空ファイルを作り、Step 0.4 の
+`BROWSER_TEST_DONE` 判定が「未実施」に倒れるうえ、Step 4.5 の
+`gh pr edit --body-file` が **PR 本文を空で上書きする**。上のように一時
+ファイルへ書いて **`gh` の終了ステータスが 0 のときだけ `mv` で確定**させ、
+失敗したらリトライし、解消できなければ skill を停止してユーザーに報告する
+(停止する前に `docs/temp/pr-body.md.tmp` は削除して残置しない)。
+判定材料は **終了ステータスであって「本文が空かどうか」ではない**。本文が空の
+PR (ad-hoc 作成 / bot PR 等) は正常系なので、空だからといって取得失敗と扱わない。
 
 `OWNED_BODY_FILE` フラグは Step 8 のクリーンアップ判定でのみ使う。
 Step 4.5 のファイル編集ロジックは両経路で共通。Step 8 では

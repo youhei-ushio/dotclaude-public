@@ -158,6 +158,13 @@ echo "$BRANCH" > "$REPO_ROOT/docs/temp/.pr-body.owner"
 #### PR 本文フォーマット
 
 - タイトルは 70 文字以内
+- **検証スクリーンショットは PR に掲載しない** (Issue 対応か否かを問わず全 PR 共通):
+  `docs/images/` へのコミットや `?raw=true` 形式での引用は行わない (対応のたびに
+  `docs/images/` が肥大化するため)。画面確認は Step 4 のブラウザテストで実施し、
+  結果は `## ブラウザテスト` セクション (Step 4 の 8) と Test plan のテキストで記録する
+  - **対象外**: `create-manual` が作る顧客向けマニュアル本体の埋め込み画像
+    (`docs/images/issue-<number>/*.png` を `?raw=true` で参照) は、検証証跡では
+    なく成果物そのものなので従来どおりコミットする
 
 ##### 基本フォーマット
 
@@ -193,7 +200,7 @@ echo "$BRANCH" > "$REPO_ROOT/docs/temp/.pr-body.owner"
 （ドキュメント成果物がある場合のみ）
 
 ## Test plan
-- テスト内容
+- [ ] テスト内容
 
 Closes #<issue 番号>
 
@@ -251,7 +258,10 @@ diff を分析し、以下の各軸について該当/非該当を判定する:
 
 以下のいずれかに該当すれば **必ず実施** (判定の skip は禁止):
 
-1. **test plan / PR 本文素案にブラウザ系キーワード**: `ブラウザ` / `画面` / `UI` / `Playwright` / `Livewire` / `画面遷移` / `ボタン` / `表示`
+1. **test plan / PR 本文素案にブラウザ系キーワード**: `ブラウザ` / `画面` / `UI` / `Playwright` / `Livewire` / `画面遷移` / `ボタン` / `表示` / `印刷` / `帳票`
+   - `印刷` / `帳票` が該当する場合は、通常画面に加えて **印刷レイアウト (印刷用 CSS の適用状態) も確認対象に含める**
+     - **`window.print()` は呼ばない**: 印刷ダイアログ (モーダル) が開いて JS スレッドと以降の MCP 操作をブロックするうえ、印刷用 CSS の検証にもならない
+     - `browser_evaluate` で `matchMedia('print').matches` や `@media print` 指定の stylesheet の適用状態を確認する / 印刷用 stylesheet の `media` を一時的に `all` に切り替えて画面上で目視する
 2. **diff に画面ファイル**:
    - `*.blade.php`, `resources/views/**`, `resources/js/**`, `*.vue`, `*.tsx`, `*.jsx`
    - Livewire: `app/Http/Livewire/**`, `app/Livewire/**`
@@ -266,7 +276,7 @@ git diff --name-only "origin/$BASE"...HEAD | grep -E '\.(blade\.php|vue|tsx|jsx)
 #### 実行
 
 1. **dev server 起動確認**: 多くは `./vendor/bin/sail` で稼働中。プロジェクト固有の起動コマンドは CLAUDE.md / `.env` / `docker-compose.yml` を確認して判断。停止していたら起動する
-   - 起動コマンドが特定できない / 3 回試行しても URL に到達できない場合は、**Step 4 全体を skip し、その旨を Step 8 の最終報告で明示**。skill 全体は escalate せず通常フローを継続
+   - 起動コマンドが特定できない / 3 回試行しても URL に到達できない場合は、**Step 4 全体を skip し、その旨を Step 8 の最終報告で明示**。skill 全体は escalate せず通常フローを継続。あわせて `docs/temp/pr-body.md` の Test plan に `- [ ] ブラウザテスト: skip ({理由})` を残す (未チェックのままにして実施済と誤認させない。`## ブラウザテスト` セクションは書かない)
 2. **URL 推測 → 検証**: test plan 項目 + 変更画面 (route から逆引き) で `mcp__playwright__browser_navigate`
 3. **操作・検証**: 必要に応じて `mcp__playwright__browser_click` / `browser_type` / `browser_snapshot`
 4. **テストデータ作成は確認不要で自律実行**: 検証に必要なら artisan tinker / factory / 直接 DB 投入で作成して良い。ユーザーに「作ってよいか」を確認する必要はない — 実装内容を網羅的にテストするために必要なデータは自分で判断して作る。**ただし本番系 / 破壊的操作 (truncate / drop / migrate:fresh 等) は禁止**。ローカル DB はテスト用なのでデータ更新は自由
@@ -334,7 +344,11 @@ git diff --name-only "origin/$BASE"...HEAD | grep -E '\.(blade\.php|vue|tsx|jsx)
    見出しは `## ブラウザテスト` リテラルで固定 (review-pr Step 0.4 の
    `BROWSER_TEST_DONE` 判定キーとして使われるため、文言を変えると Step 5
    再走査がスキップされる)。実施した操作パスの一覧を簡潔に記載する。
-   スクリーンショットの添付は不要。
+   スクリーンショットの添付は不要 (撮影する場合もリポジトリ外の一時パスへ出力し、
+   コミットしない)。印刷レイアウトも確認した場合はその旨を含める。
+   記録の有無は 3 通り: 実施した → `## ブラウザテスト` セクション / Step 4 に入ったが
+   skip → Test plan に `- [ ] ブラウザテスト: skip ({理由})` (項番 1) / 実施判定が false で
+   Step 4 に入らなかった → どちらも書かない。
 
 ### Step 5: セルフレビュー (`review-pr` skill に委譲)
 
@@ -653,19 +667,21 @@ skill が「ユーザー確認を取って停止する」のは以下のとき�
 
 ## ブラウザテスト実施判定基準
 
-以下のいずれかが true なら **必ず実施**:
+**正典は Step 4「実施判定 (OR 条件)」**。キーワード一覧と diff パターンをここに複製
+すると片方だけ更新されて食い違うため、Step 4 を参照する。
 
-- PR 本文 (素案でも可) / test plan / 変更ファイル名・パス に画面系キーワード (`ブラウザ` / `画面` / `UI` / `Playwright` / `Livewire` / `画面遷移` / `ボタン` / `表示`) が出現
-- diff にビュー / コンポーネントファイル (`.blade.php`, `.vue`, `.tsx`, `.jsx`, `resources/views/**`, `resources/js/**`, `app/(Http/)?Livewire/**`) が含まれる
-
-判定の skip 判断は不要。両条件が false でも実施したほうが安心な場合は実施して構わない。
+判定の skip 判断は不要。条件が false でも実施したほうが安心な場合は実施して構わない。
 
 ---
 
 ## 注意事項
 
 - push は必ず `gh` 経由 (SSH 鍵なし)。`gh auth setup-git` を先に走らせる
-- `docs/temp/` は `.gitignore` 対象外なので Step 9 で必ず掃除
+- `docs/temp/` は `.gitignore` 対象外なので Step 9 で必ず掃除。Step 3 で作った
+  `pr-body.md` / `.pr-body.owner` は Step 5 のレビュー中のコミット時点で存在する。
+  **`git add -A` / `git add .` のような一括 add は使わず、変更ファイルを明示して add する**
+  (一時ファイルと sidecar が PR に混入する)。配布先プロジェクトでは `.gitignore` に
+  `docs/temp/` を入れておくとより安全
 - PR 本文を `--body` で直接渡す方法は使わない (`#` 行問題)
 - セルフレビューループ中の commit message・PR 本文の毎巡更新方針は `review-pr` 側に集約 (本 skill では別途定義しない)
 - **指摘 0 件で自然終了 = 基本ゴール / ITER_MAX 到達 = 警戒シグナル または収束** (詳細解釈は `skills/global/review-pr/SKILL.md` 冒頭参照)。Step 8 の報告では ITER_MAX 到達ケースの「巡ごとの auto-fix 件数推移」と「収束 / 警戒の判定」を明記すること (`review-pr` から受領した出力をそのまま転載でよい)
